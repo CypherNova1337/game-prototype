@@ -1,0 +1,10 @@
+# Android / Gradle
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+*.iml
+.idea/
+
+# Node (only used by the headless UI harness)
+node_modules/

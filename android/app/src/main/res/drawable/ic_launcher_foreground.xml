@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- orbital ring -->
+    <path
+        android:strokeColor="#2AF5FF"
+        android:strokeWidth="2.5"
+        android:strokeAlpha="0.55"
+        android:fillColor="#00000000"
+        android:pathData="M54,28 m-22,0 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0" />
+
+    <!-- four-point nova -->
+    <path
+        android:fillColor="#5BE9FF"
+        android:pathData="M54,26 L59.5,48.5 L82,54 L59.5,59.5 L54,82 L48.5,59.5 L26,54 L48.5,48.5 Z" />
+
+    <!-- hot core -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,48 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0"
+        android:fillAlpha="0.9" />
+
+    <!-- drift trail -->
+    <path
+        android:fillColor="#FF4FD1"
+        android:fillAlpha="0.85"
+        android:pathData="M30,74 L54,62 L78,74 L54,70 Z" />
+</vector>
