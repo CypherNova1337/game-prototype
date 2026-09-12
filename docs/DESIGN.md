@@ -56,10 +56,44 @@ one on the harder sectors.
   detail sheet with upgrade.
 - **SYSTEM** — service record, full log, save wipe.
 
+## Combat
+
+Turn-based, three units against a hostile line of three to five. Every item
+carries an ability on a cooldown — strike, volley, execute, siphon, mend, ward
+or rally — so a squad is a composition, not a sum. Units act in speed order,
+damage swings +/-22%, crits multiply by 1.8, and shields absorb before health.
+
+Combat derives entirely from the power number the armory already shows, so a
+player never has to learn a second stat system: HP is power x 4.2, attack is
+power, and matching a sector's faction adds 20%.
+
+The engine (`js/combat.js`) resolves a whole fight up front and returns a
+timeline of events; `js/battle.js` animates that timeline. Keeping those apart
+is what lets `tools/balance.js` run thousands of fights headlessly.
+
+## Difficulty and pacing, as measured
+
+Encounters are budgeted against an explicit power curve — what a player
+plausibly fields at each tier — rather than a compounding multiplier. Pressure
+values per chapter are solved by `tools/calibrate.js` to hit ~85% win on
+normal nodes and ~60% on bosses for a squad sitting on the curve.
+
+Below the curve the drop is steep: a squad at 75% power wins almost nothing.
+That is inherent to a damage race, and the fix is honesty rather than
+softening — the briefing screen shows recommended power, your power, and live
+Monte-Carlo odds before any fuel is spent.
+
+Free-to-play completion is measured by `tools/economy.js`: 5 of 5 simulated
+runs clear all 20 nodes for nothing, in 2-8 days of aggressive play, taking
+120-170 summons and 2-4 ASCENDANTs on the way.
+
 ## What a next pass should add
 
-1. A real sector encounter instead of a single power roll.
-2. Server-authoritative pulls (see `docs/UNREAL-MAPPING.md`) — the current
-   roll is client-side and editable.
+1. Server-authoritative pulls and combat — both are client-side today.
+2. More roster: 25 items and 3 legendaries is thin for a gacha, and it caps
+   how long the collection stays interesting.
 3. Banner rotation with a pity counter per banner.
-4. Item art, audio, and a first-run tutorial beat.
+4. Item art and a first-run tutorial beat.
+5. More campaign: 20 nodes is a few days of content, and the limit on playtime
+   is content, not monetisation — which is the right way round, but it does
+   mean the game currently ends.

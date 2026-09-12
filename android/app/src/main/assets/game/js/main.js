@@ -47,6 +47,19 @@
     State.pushLog('Drifter registered. Standard kit issued.', 'info');
   }
 
+  function applyAudioSettings() {
+    const settings = State.get().settings;
+    Sfx.setEnabled('sfx', settings.sfx !== false);
+    // Music waits for the first tap: browsers hold the audio clock until
+    // a gesture, so starting here would be silently dropped.
+    Sfx.setEnabled('music', settings.music !== false);
+    document.body.addEventListener('pointerdown', function once() {
+      Sfx.unlock();
+      if (State.get().settings.music !== false) Sfx.startMusic();
+      document.body.removeEventListener('pointerdown', once);
+    });
+  }
+
   function clearBootScreen() {
     const boot = document.getElementById('boot');
     if (boot && boot.parentNode) boot.parentNode.removeChild(boot);
@@ -56,6 +69,9 @@
     State.load()
       .then(() => {
         firstRunGrant();
+        Cosmetics.apply();
+        State.collectSupporter();
+        applyAudioSettings();
         UI.bind();
         UI.render();
         clearBootScreen();
@@ -70,8 +86,11 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       State.flush();
+      Sfx.stopMusic();
     } else {
       State.tickFuel();
+      State.collectSupporter();
+      if (State.get().settings.music !== false) Sfx.startMusic();
       UI.render();
     }
   });
@@ -81,7 +100,7 @@
   // Exposed for MainActivity's hardware back-button bridge.
   window.Nova = {
     handleBack: () => UI.handleBack(),
-    version: '0.1.1'
+    version: '0.2.0'
   };
 
   if (document.readyState === 'loading') {

@@ -27,24 +27,50 @@ const State = (() => {
       inventory: {},
       squad: [null, null, null],
       pity: { sinceLegendary: 0, sinceRare: 0 },
-      stats: { pulls: 0, legendaries: 0, missionsRun: 0, missionsWon: 0 },
+
+      // campaign progress: nodeId -> best star count
+      campaign: { stars: {}, lastNode: null },
+
+      // drift pass
+      pass: { xp: 0, level: 1, claimedFree: [], claimedPremium: [] },
+
+      // daily contracts, rerolled on date change
+      quests: { day: null, progress: {}, claimed: [] },
+      login: { lastDay: null, streak: 0 },
+
+      // purchases. Everything here is cosmetic or currency — never power.
+      entitlements: {
+        themes: ['drift'],
+        sigils: ['nova'],
+        titles: ['drifter', 'salvager'],
+        passPremium: false,
+        supporter: false,
+        supporterLastPaid: null
+      },
+      cosmetics: { theme: 'drift', sigil: 'nova', title: 'drifter' },
+      settings: { sfx: true, music: true, battleSpeed: 1 },
+
+      stats: {
+        pulls: 0, legendaries: 0, missionsRun: 0, missionsWon: 0,
+        battlesWon: 0, bossesFelled: 0, perfectClears: 0, spent: 0
+      },
       log: []
     };
   }
 
+  /** Older saves keep their progress and gain whatever fields are new. */
   function migrate(save) {
-    // Only one schema so far; this is where future saves get patched up.
     const base = freshSave();
-    return Object.assign(base, save, {
-      wallet: Object.assign(base.wallet, save.wallet),
-      fuel: Object.assign(base.fuel, save.fuel),
-      pity: Object.assign(base.pity, save.pity),
-      stats: Object.assign(base.stats, save.stats)
+    const merged = Object.assign(base, save);
+    ['wallet', 'fuel', 'pity', 'stats', 'campaign', 'pass', 'quests',
+     'login', 'entitlements', 'cosmetics', 'settings'].forEach(key => {
+      merged[key] = Object.assign({}, base[key], save[key] || {});
     });
+    return merged;
   }
 
   async function load() {
-    const record = await Storage.read(COLLECTION, KEY);
+    const record = await SaveStore.read(COLLECTION, KEY);
     data = record && record.value ? migrate(record.value) : freshSave();
     tickFuel();
     return data;
@@ -55,17 +81,17 @@ const State = (() => {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
-      Storage.write(COLLECTION, KEY, data);
+      SaveStore.write(COLLECTION, KEY, data);
     }, 120);
   }
 
   function flush() {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-    return Storage.write(COLLECTION, KEY, data);
+    return SaveStore.write(COLLECTION, KEY, data);
   }
 
   async function reset() {
-    await Storage.clearAll();
+    await SaveStore.clearAll();
     data = freshSave();
     await flush();
     return data;
@@ -221,6 +247,170 @@ const State = (() => {
     save();
   }
 
+  /* ---------------- campaign ---------------- */
+
+  function starsOn(nodeId) { return data.campaign.stars[nodeId] || 0; }
+
+  function totalStars() {
+    return Object.keys(data.campaign.stars)
+      .reduce((sum, id) => sum + data.campaign.stars[id], 0);
+  }
+
+  function isCleared(nodeId) { return starsOn(nodeId) > 0; }
+
+  /** Nodes unlock in order; the first one is always open. */
+  function isUnlocked(nodeId) {
+    const index = ALL_NODES.findIndex(n => n.id === nodeId);
+    if (index <= 0) return index === 0;
+    return isCleared(ALL_NODES[index - 1].id);
+  }
+
+  function nextNode() {
+    return ALL_NODES.find(n => !isCleared(n.id)) || ALL_NODES[ALL_NODES.length - 1];
+  }
+
+  /** Records a clear, keeping the best star count. Returns what is new. */
+  function recordClear(nodeId, stars) {
+    const previous = starsOn(nodeId);
+    const firstClear = previous === 0;
+    if (stars > previous) data.campaign.stars[nodeId] = stars;
+    data.campaign.lastNode = nodeId;
+    save();
+    return { firstClear, improved: stars > previous, previous };
+  }
+
+  /* ---------------- drift pass ---------------- */
+
+  function addPassXp(amount) {
+    const before = data.pass.level;
+    data.pass.xp += amount;
+    while (data.pass.level < PASS.levels && data.pass.xp >= PASS.xpPerLevel) {
+      data.pass.xp -= PASS.xpPerLevel;
+      data.pass.level += 1;
+    }
+    if (data.pass.level >= PASS.levels) data.pass.xp = Math.min(data.pass.xp, PASS.xpPerLevel);
+    save();
+    return { levelsGained: data.pass.level - before, level: data.pass.level };
+  }
+
+  function passClaimable(level, premium) {
+    if (level > data.pass.level) return false;
+    if (premium && !data.entitlements.passPremium) return false;
+    const claimed = premium ? data.pass.claimedPremium : data.pass.claimedFree;
+    return claimed.indexOf(level) === -1;
+  }
+
+  function claimPass(level, premium) {
+    if (!passClaimable(level, premium)) return null;
+    const reward = PASS.reward(level, premium);
+    (premium ? data.pass.claimedPremium : data.pass.claimedFree).push(level);
+    grantBundle(reward);
+    save();
+    return reward;
+  }
+
+  /* ---------------- daily contracts ---------------- */
+
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  /** Rolls the day over if needed. Safe to call on every render. */
+  function ensureDaily() {
+    if (data.quests.day === today()) return false;
+    data.quests.day = today();
+    data.quests.progress = {};
+    data.quests.claimed = [];
+    save();
+    return true;
+  }
+
+  function questProgress(questId) { return data.quests.progress[questId] || 0; }
+
+  function advanceQuest(questId, amount) {
+    ensureDaily();
+    const quest = QUESTS.find(q => q.id === questId);
+    if (!quest) return;
+    const next = Math.min(quest.goal, questProgress(questId) + (amount || 1));
+    data.quests.progress[questId] = next;
+    save();
+  }
+
+  function questClaimable(questId) {
+    const quest = QUESTS.find(q => q.id === questId);
+    return !!quest && questProgress(questId) >= quest.goal
+        && data.quests.claimed.indexOf(questId) === -1;
+  }
+
+  function claimQuest(questId) {
+    if (!questClaimable(questId)) return null;
+    const quest = QUESTS.find(q => q.id === questId);
+    data.quests.claimed.push(questId);
+    grantBundle(quest.reward);
+    save();
+    return quest.reward;
+  }
+
+  function loginClaimable() { return data.login.lastDay !== today(); }
+
+  function claimLogin() {
+    if (!loginClaimable()) return null;
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    data.login.streak = data.login.lastDay === yesterday ? data.login.streak + 1 : 1;
+    data.login.lastDay = today();
+    data.wallet.chronite += DAILY_LOGIN.chronite;
+    data.fuel.amount = Math.min(ECONOMY.fuelCap, data.fuel.amount + DAILY_LOGIN.fuel);
+    save();
+    return { chronite: DAILY_LOGIN.chronite, fuel: DAILY_LOGIN.fuel, streak: data.login.streak };
+  }
+
+  /** Supporter pays a daily trickle; convenience, never power. */
+  function collectSupporter() {
+    if (!data.entitlements.supporter) return null;
+    if (data.entitlements.supporterLastPaid === today()) return null;
+    data.entitlements.supporterLastPaid = today();
+    data.wallet.chronite += 150;
+    save();
+    return { chronite: 150 };
+  }
+
+  /* ---------------- entitlements and cosmetics ---------------- */
+
+  function owns(kind, ref) {
+    const list = data.entitlements[kind];
+    return Array.isArray(list) ? list.indexOf(ref) !== -1 : !!list;
+  }
+
+  function grantCosmetic(kind, ref) {
+    const list = data.entitlements[kind];
+    if (Array.isArray(list) && list.indexOf(ref) === -1) list.push(ref);
+    save();
+  }
+
+  function setCosmetic(slot, ref) {
+    data.cosmetics[slot] = ref;
+    save();
+  }
+
+  function setSetting(key, value) {
+    data.settings[key] = value;
+    save();
+  }
+
+  /** Applies a reward object of any shape: currency, xp or a cosmetic. */
+  function grantBundle(reward) {
+    if (!reward) return;
+    if (reward.chronite) data.wallet.chronite += reward.chronite;
+    if (reward.scrap) data.wallet.scrap += reward.scrap;
+    if (reward.shards) data.wallet.shards += reward.shards;
+    if (reward.fuel) data.fuel.amount = Math.min(ECONOMY.fuelCap, data.fuel.amount + reward.fuel);
+    if (reward.xp) addPassXp(reward.xp);
+    if (reward.cosmetic) {
+      const bucket = reward.cosmetic.kind === 'theme' ? 'themes'
+                   : reward.cosmetic.kind === 'sigil' ? 'sigils' : 'titles';
+      grantCosmetic(bucket, reward.cosmetic.ref);
+    }
+    save();
+  }
+
   /* ---------------- log ---------------- */
 
   function pushLog(text, tone) {
@@ -232,10 +422,15 @@ const State = (() => {
   return {
     load, save, flush, reset, get,
     tickFuel, msToNextFuel,
-    canAfford, spend, grant,
+    canAfford, spend, grant, grantBundle,
     addItem, owned, inventoryIds, getEntry, getPower,
     upgradeCost, canUpgrade, upgrade,
     setSquadSlot, squadPower, autoSquad,
+    starsOn, totalStars, isCleared, isUnlocked, nextNode, recordClear,
+    addPassXp, passClaimable, claimPass,
+    ensureDaily, questProgress, advanceQuest, questClaimable, claimQuest,
+    loginClaimable, claimLogin, collectSupporter,
+    owns, grantCosmetic, setCosmetic, setSetting,
     pushLog
   };
 })();

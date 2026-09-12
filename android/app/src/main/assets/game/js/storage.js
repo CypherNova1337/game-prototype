@@ -12,7 +12,7 @@
  * server later means rewriting this file and nothing else.
  * ------------------------------------------------------------------ */
 
-const Storage = (() => {
+const SaveStore = (() => {
   const FALLBACK_KEY = 'nova::store';
 
   const vault = (() => {

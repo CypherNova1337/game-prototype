@@ -74,9 +74,34 @@ them.
 separators, protocol-relative paths, dotfiles and character-set violations.
 Run with `./gradlew test`.
 
+## The store
+
+No payment processor is wired up. `Commerce.purchase()` in `js/store.js` is a
+stub that resolves after a short delay and grants the entitlement locally, and
+every screen that can spend says so: the store header and the confirm dialog
+both read "no payment is processed and nothing is charged."
+
+The stub is deliberately the right shape for what replaces it — a call that
+returns a receipt — so the seam sits where it belongs. Before it handles real
+money, all of this has to be true:
+
+1. The receipt is validated **server-side** against Google Play. Never on the
+   client, and never trusted because the client says it verified it.
+2. Entitlements live on the server and are read back, not minted locally. The
+   current code grants its own entitlement, which is exactly the thing that
+   must not survive this change.
+3. Purchases are idempotent against a request id, so a retry or a replayed
+   receipt cannot grant twice.
+4. Restore-purchases works from the server record, so a reinstall is not a
+   support ticket.
+5. The price shown is the platform's localised price, not a hardcoded string.
+
+Until then the store is a design prototype, not a payment flow.
+
 ## Known limitations — read before trusting this with money
 
-- **Rolls happen on the client.** The HMAC makes the *stored* save
+- **Rolls and fights happen on the client.** Summon results, combat outcomes
+  and rewards are all computed on the device. The HMAC makes the *stored* save
   tamper-evident; it does not make the game authoritative. Anyone who can run
   code in the process can call the Keystore to re-sign whatever they like. This
   is fine while the game is single-player and nothing is purchasable, and it is

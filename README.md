@@ -4,7 +4,7 @@ A playable, installable prototype of the sci-fi gacha game from the design
 transcript: summon units, catalogue them in a grid-based armory, assign a
 strike team, and run sectors to earn the currency for the next summon.
 
-**Download:** [`dist/nova-drift-0.1.1-prototype.apk`](dist/nova-drift-0.1.1-prototype.apk) (42 KB)
+**Download:** [`dist/nova-drift-0.2.0-prototype.apk`](dist/nova-drift-0.2.0-prototype.apk) (69 KB)
 
 > This is the game, not a mock-up of one: a native Android package with the
 > systems from the design transcript rebuilt in a stack that ships in seconds
@@ -40,7 +40,7 @@ stack trace. The **SYSTEM** tab shows the same diagnostics at any time, and
 ## Install
 
 ```bash
-adb install -r dist/nova-drift-0.1.1-prototype.apk
+adb install -r dist/nova-drift-0.2.0-prototype.apk
 ```
 
 Or copy the APK to the device and open it (allow "install from unknown
@@ -52,17 +52,35 @@ sideloading, not for distribution.
 
 | System | Detail |
 |---|---|
-| Summon | 1× / 10× pulls, animated reveal, skip-all, 4 rarity tiers |
+| Combat | Turn-based auto-battle with abilities, crits, shields, heals and buffs — animated, skippable, 1–3× speed |
+| Campaign | 4 chapters, 20 nodes, 4 bosses, 3-star objectives per node |
+| Summon | 1× / 10× pulls, animated reveal, rarity-scaled stingers, skip-all |
 | Pity | Guaranteed ENHANCED+ every 10; ASCENDANT soft pity from 60, hard at 70 |
-| Item database | 25 items across 3 types, 4 factions, line-art icon per row |
-| Armory | 4-per-row slot grid, type filters, detail sheet, duplicate → shards |
-| Upgrades | Level 1–10 per item, scrap + shards, +12% base power per level |
-| Deploy | 3-slot strike team, 5 sectors, faction matchup bonus (+20%), fuel economy |
+| Roster | 25 items, each with a combat ability; 18 hostile types across 4 factions |
+| Armory | 4-per-row slot grid, type filters, detail sheet, duplicates → shards |
+| Upgrades | Level 1–10, scrap + shards, +12% base power per level |
+| Progression | Drift Pass (30 levels), daily contracts, daily login, first-clear bonuses |
+| Store | Cosmetics, pass, chronite — nothing that touches power. No payment processor is wired up |
+| Audio | Every sound synthesised at runtime — no audio files in the package |
 | Save | App-private, HMAC-signed with a non-extractable device key |
 | Security | Zero permissions, no network, locked-down WebView — see [docs/SECURITY.md](docs/SECURITY.md) |
 
-Starting grant: 4,800 chronite (three 10-pulls), 1,500 scrap, full fuel,
-plus a three-item starter kit so DEPLOY is usable before the first summon.
+Starting grant: 1,600 chronite (one 10-pull), 1,500 scrap, full fuel, plus a
+three-item starter kit so the first sector is playable before any summon.
+
+## Monetisation, stated plainly
+
+The game is finishable without paying, and that is measured rather than
+claimed: `node tools/economy.js` drives a free-to-play agent through the real
+systems and reports what it cost. Current result — **5 of 5 runs clear all 20
+nodes for $0.00**, in 2–8 days of aggressive play.
+
+What the store sells: palettes, squad sigils, commander titles, the premium
+pass track (cosmetic rewards only — every chronite, scrap and shard reward
+sits on the free track), and chronite, which is earned by playing and only
+ever buys summons. What it does not sell: stats, exclusive units, power of any
+kind, energy refills, or ads. There are no loot boxes purchasable with real
+money — summons cost chronite, and the drop rates are published in-game.
 
 ## Layout
 
@@ -75,14 +93,20 @@ android/                      Gradle project (AGP 8.7.3, minSdk 26, targetSdk 34
   app/src/test/java/...       unit tests for the asset path parser
   app/src/main/assets/game/   the game
     index.html                shell + SVG icon sprite (one symbol per item row)
-    css/style.css             console/HUD styling, rarity carried by --r
-    js/data.js                item database, rarities, banner, sectors, economy
-    js/storage.js             save layer, shaped like Nakama storage objects
+    css/style.css             console/HUD styling, accents carried by --r
+    js/data.js                items, abilities, rarities, banner, combat + economy tuning
+    js/content.js             enemies, campaign, cosmetics, store, pass, contracts
+    js/storage.js             save layer, shaped like a remote storage engine
     js/state.js               player save + every rule that mutates it
     js/gacha.js               pull rates and both pity systems
-    js/missions.js            sector resolution and rewards
+    js/combat.js              the fight — pure logic, emits a timeline
+    js/battle.js              plays that timeline back with animation
+    js/campaign.js            deploying to a node and paying out
+    js/store.js               catalogue, commerce stub, cosmetics
+    js/audio.js               every sound, synthesised at runtime
     js/ui.js                  screens, slots, overlays
     js/main.js                boot
+tools/                        headless tuning harnesses (see below)
 dist/                         built APKs
 docs/                         design notes and the Unreal mapping
 ```
@@ -96,6 +120,21 @@ ANDROID_HOME=/path/to/android-sdk ./gradlew test assembleRelease
 ```
 
 Needs JDK 17+ and an Android SDK with platform 34 / build-tools 34.0.0.
+
+## Tuning harnesses
+
+The difficulty curve and the economy are tuned by simulation against the real
+code, not by feel:
+
+```bash
+node tools/balance.js 300     # win rate per node at 75% / 100% / 125% power
+node tools/calibrate.js       # solves the pressure that hits a target win rate
+node tools/economy.js 180 5   # free-to-play playthrough: how long, what cost
+```
+
+Both caught real design bugs: `balance.js` found enemy scaling that outgrew
+the player between every chapter step, and `economy.js` found an endgame that
+demanded more power than the game could physically produce.
 
 ## Editing the game
 
