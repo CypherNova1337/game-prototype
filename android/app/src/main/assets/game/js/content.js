@@ -8,50 +8,63 @@
 
 /* ---------------- hostiles ---------------- */
 
-const ENEMIES = {
-  // Ossuary Belt — scavengers who strip wrecks and anyone still in them
-  scav_picker:   { name: 'Bone Picker',      faction: 'raven',   icon: 'ic-pistol',  base: 42, role: 'skirmisher' },
-  scav_cutter:   { name: 'Hull Cutter',      faction: 'raven',   icon: 'ic-blade',   base: 50, role: 'striker' },
-  scav_hauler:   { name: 'Scrap Hauler',     faction: 'raven',   icon: 'ic-shield',  base: 62, role: 'bulwark' },
-  scav_swarm:    { name: 'Swarm Drone',      faction: 'raven',   icon: 'ic-drone',   base: 34, role: 'skirmisher' },
+/* Hostiles are drawn from the same roster you summon from: a Bone Picker
+   fights the way your Bone Picker does. Chapter bosses are the four
+   ASCENDANTs, so you meet a champion before you can ever pull one. */
 
-  // Helix Drydock — corporate security with better toys than you
-  helix_sentry:  { name: 'Drydock Sentry',   faction: 'helix',   icon: 'ic-rifle',   base: 58, role: 'striker' },
-  helix_warden:  { name: 'Contract Warden',  faction: 'helix',   icon: 'ic-visor',   base: 66, role: 'skirmisher' },
-  helix_bastion: { name: 'Bastion Frame',    faction: 'helix',   icon: 'ic-shield',  base: 80, role: 'bulwark' },
-  helix_lance:   { name: 'Lance Platform',   faction: 'helix',   icon: 'ic-cannon',  base: 74, role: 'artillery' },
+const TEAM_SIZE = 4;
 
-  // Cinder Reach — Solaris zealots burning their own worlds first
-  sol_pilgrim:   { name: 'Ash Pilgrim',      faction: 'solaris', icon: 'ic-helm',    base: 68, role: 'striker' },
-  sol_censor:    { name: 'Flame Censor',     faction: 'solaris', icon: 'ic-reactor', base: 82, role: 'artillery' },
-  sol_deacon:    { name: 'Cinder Deacon',    faction: 'solaris', icon: 'ic-visor',   base: 90, role: 'support' },
+/** Weight used to split a node's power budget across its line. */
+const ARCHETYPE_WEIGHT = { common: 1, rare: 1.35, epic: 1.8, legendary: 2.6 };
 
-  // The Black Fold — whatever the Voidkin left behind
-  void_husk:     { name: 'Drift Husk',       faction: 'voidk',   icon: 'ic-helm',    base: 86, role: 'striker' },
-  void_maw:      { name: 'Fold Maw',         faction: 'voidk',   icon: 'ic-core',    base: 104, role: 'artillery' },
-  void_echo:     { name: 'Echo of Nyx',      faction: 'voidk',   icon: 'ic-visor',   base: 96, role: 'skirmisher' },
+/**
+ * Scale an archetype to a target power score. Solved rather than guessed:
+ * the power formula is linear in HP/ATK/DEF, so the multiplier follows
+ * directly.
+ */
+function scaleToPower(hero, targetPower, opts) {
+  const o = opts || {};
+  const base = heroBaseStats(hero);
+  const fixed = base.spd * 6 + base.crate * 320 + base.cdmg * 160;
+  const linear = base.hp * 0.09 + base.atk * 1.7 + base.def * 1.1;
+  const k = Math.max(0.15, (targetPower - fixed) / linear);
 
-  // Bosses — one per chapter, each with a signature the log calls out
-  boss_carrion:  { name: 'CARRION PRIME',    faction: 'raven',   icon: 'ic-cannon',  base: 120, role: 'boss',
-                   boss: true, hpScale: 1.9, signature: { name: 'Scrap Storm', cd: 3, effect: 'volley', power: 1.1 } },
-  boss_foreman:  { name: 'FOREMAN ATLAS',    faction: 'helix',   icon: 'ic-shield',  base: 150, role: 'boss',
-                   boss: true, hpScale: 2.0, signature: { name: 'Lockdown', cd: 3, effect: 'strike', power: 2.2 } },
-  boss_pyre:     { name: 'THE PYRE SAINT',   faction: 'solaris', icon: 'ic-reactor', base: 178, role: 'boss',
-                   boss: true, hpScale: 2.0, signature: { name: 'Immolation', cd: 2, effect: 'volley', power: 1.3 } },
-  boss_fold:     { name: 'THE FOLD ITSELF',  faction: 'voidk',   icon: 'ic-core',    base: 215, role: 'boss',
-                   boss: true, hpScale: 2.2, signature: { name: 'Unmake', cd: 2, effect: 'execute', power: 2.6 } }
-};
+  const stats = {
+    hp: Math.round(base.hp * k * (o.hpScale || 1)),
+    atk: Math.round(base.atk * k),
+    def: Math.round(base.def * k),
+    spd: base.spd + (o.spdBonus || 0),
+    crate: base.crate + (o.boss ? 0.08 : 0),
+    cdmg: base.cdmg + (o.boss ? 0.15 : 0),
+    acc: base.acc + Math.round(targetPower / 60),
+    res: base.res + Math.round(targetPower / 80),
+    lifesteal: 0
+  };
+  stats.power = Math.round(
+    stats.hp * 0.09 + stats.atk * 1.7 + stats.def * 1.1 + stats.spd * 6
+    + stats.crate * 320 + stats.cdmg * 160
+  );
+  return stats;
+}
 
-/* Role decides how a hostile behaves, so a line of four reads differently
-   depending on what is standing in it. */
-const ROLE = {
-  skirmisher: { hp: 0.85, atk: 1.1,  spd: 13 },
-  striker:    { hp: 1.0,  atk: 1.0,  spd: 11 },
-  bulwark:    { hp: 1.6,  atk: 0.7,  spd: 8  },
-  artillery:  { hp: 0.8,  atk: 1.25, spd: 9  },
-  support:    { hp: 1.0,  atk: 0.85, spd: 12 },
-  boss:       { hp: 1.0,  atk: 1.05, spd: 10 }
-};
+/** Build the hostile line for a node, ready to hand to Combat.resolve. */
+function buildFoes(node) {
+  const budget = nodeBudget(node);
+  const weights = node.comp.map(id => ARCHETYPE_WEIGHT[getHero(id).rarity] || 1);
+  const total = weights.reduce((a, b) => a + b, 0);
+
+  return node.comp.map((heroId, i) => {
+    const hero = getHero(heroId);
+    const isBoss = !!node.boss && i === 0;
+    const share = budget * (weights[i] / total) * (isBoss ? 1.15 : 1);
+    const stats = scaleToPower(hero, share, {
+      boss: isBoss,
+      hpScale: isBoss ? 2.1 : 1,
+      spdBonus: isBoss ? 6 : 0
+    });
+    return { hero, stats, boss: isBoss };
+  });
+}
 
 /* ---------------- campaign ---------------- */
 
@@ -65,27 +78,30 @@ const TIER_SCALE = tier => 1 + 0.34 * (tier - 1);
    enemies outgrow the player between every chapter step, which is exactly
    what tools/balance.js caught on the first pass. */
 const POWER_CURVE = [
-  120, 155, 195, 245, 305,        // chapter 1
-  385, 455, 535, 655, 785,        // chapter 2
-  900, 1010, 1120, 1230, 1340,    // chapter 3
-  1450, 1560, 1670, 1780, 1900    // chapter 4
+  11000, 12600, 14500, 16600, 19000,        // chapter 1
+  21800, 25000, 28700, 33000, 37800,        // chapter 2
+  43400, 48000, 53000, 58000, 64000,        // chapter 3
+  70000, 77000, 84000, 92000, 100000        // chapter 4
 ];
 
-/* The tail of that curve is bounded by what a player can actually field:
-   the best three items at max level come to roughly 2,530 power, so the
-   final node must sit well under it. tools/economy.js caught the first
-   pass, where node 19 demanded more power than the game could produce. */
-const MAX_REACHABLE_POWER = 2530;
+/* The tail is bounded by what a player actually reaches, which is not the
+   same as the theoretical maximum. A perfectly geared team of four maxed
+   ASCENDANTs would be around 190,000, but tools/economy.js shows a
+   well-played free account plateauing near 95,000-120,000: real gear is a
+   mix of whatever dropped, not six ideal pieces. An earlier tail of
+   149,000 left the last two nodes unwinnable for a maxed account with a
+   million scrap it had nothing to spend on. */
+const MAX_REACHABLE_POWER = 120000;
 
 /* Share of the player's own power a node may field, per chapter and per
    position in it. Solved by tools/calibrate.js for ~85% win on curve
    (~60% on bosses) — later chapters need more pressure because the
    squads there have far better abilities, not just bigger numbers. */
 const NODE_PRESSURE = {
-  ch1: [0.90, 0.92, 0.99, 0.99, 0.79],
-  ch2: [1.02, 1.04, 1.06, 1.12, 0.83],
-  ch3: [1.07, 1.15, 1.14, 1.18, 0.82],
-  ch4: [1.17, 1.21, 1.20, 1.23, 0.91]
+  ch1: [0.72, 0.80, 0.80, 0.87, 0.65],
+  ch2: [0.90, 0.96, 0.76, 0.71, 0.46],
+  ch3: [0.92, 0.91, 0.91, 0.97, 0.67],
+  ch4: [0.80, 0.92, 0.76, 0.88, 0.74]
 };
 
 /** Total enemy power a node may spend, and how it splits across the line. */
@@ -115,44 +131,44 @@ const CHAPTERS = [
     id: 'ch1', name: 'OSSUARY BELT', faction: 'raven',
     blurb: 'A graveyard of hulls, picked over by people who got here first.',
     nodes: [
-      { id: 'c1n1', name: 'Drift Approach',   tier: 1,  fuel: 6,  comp: ['scav_swarm', 'scav_picker', 'scav_picker'] },
-      { id: 'c1n2', name: 'Rib Corridor',     tier: 2,  fuel: 6,  comp: ['scav_picker', 'scav_cutter', 'scav_swarm', 'scav_swarm'] },
-      { id: 'c1n3', name: 'The Spine',        tier: 3,  fuel: 8,  comp: ['scav_cutter', 'scav_cutter', 'scav_hauler'] },
-      { id: 'c1n4', name: 'Marrow Hold',      tier: 4,  fuel: 8,  comp: ['scav_hauler', 'scav_cutter', 'scav_picker', 'scav_swarm'] },
-      { id: 'c1n5', name: 'Carrion Throne',   tier: 5,  fuel: 10, comp: ['boss_carrion', 'scav_cutter', 'scav_hauler'], boss: true }
+      { id: 'c1n1', name: 'Drift Approach',   tier: 1,  fuel: 6,  comp: ['swarm', 'picker', 'picker'] },
+      { id: 'c1n2', name: 'Rib Corridor',     tier: 2,  fuel: 6,  comp: ['picker', 'cutter', 'swarm', 'swarm'] },
+      { id: 'c1n3', name: 'The Spine',        tier: 3,  fuel: 8,  comp: ['cutter', 'cutter', 'plating'] },
+      { id: 'c1n4', name: 'Marrow Hold',      tier: 4,  fuel: 8,  comp: ['plating', 'cutter', 'picker', 'hauler'] },
+      { id: 'c1n5', name: 'Carrion Throne',   tier: 5,  fuel: 10, comp: ['kestrel', 'cutter', 'hauler', 'plating'], boss: true }
     ]
   },
   {
     id: 'ch2', name: 'HELIX DRYDOCK', faction: 'helix',
     blurb: 'Someone is still building warships here, and they are not hiring.',
     nodes: [
-      { id: 'c2n1', name: 'Outer Gantry',     tier: 6,  fuel: 10, comp: ['helix_sentry', 'helix_sentry', 'helix_warden'] },
-      { id: 'c2n2', name: 'Coolant Deck',     tier: 7,  fuel: 10, comp: ['helix_warden', 'helix_lance', 'helix_sentry', 'helix_sentry'] },
-      { id: 'c2n3', name: 'Slipway Four',     tier: 8,  fuel: 12, comp: ['helix_bastion', 'helix_lance', 'helix_warden'] },
-      { id: 'c2n4', name: 'Contract Floor',   tier: 9,  fuel: 12, comp: ['helix_bastion', 'helix_bastion', 'helix_lance', 'helix_warden'] },
-      { id: 'c2n5', name: "Foreman's Yard",   tier: 10, fuel: 14, comp: ['boss_foreman', 'helix_bastion', 'helix_lance'], boss: true }
+      { id: 'c2n1', name: 'Outer Gantry',     tier: 6,  fuel: 10, comp: ['sentry', 'sentry', 'warden'] },
+      { id: 'c2n2', name: 'Coolant Deck',     tier: 7,  fuel: 10, comp: ['warden', 'lance', 'sentry', 'medtech'] },
+      { id: 'c2n3', name: 'Slipway Four',     tier: 8,  fuel: 12, comp: ['bastion', 'lance', 'warden'] },
+      { id: 'c2n4', name: 'Contract Floor',   tier: 9,  fuel: 12, comp: ['bastion', 'bastion', 'lance', 'medtech'] },
+      { id: 'c2n5', name: "Foreman's Yard",   tier: 10, fuel: 14, comp: ['atlas', 'bastion', 'lance', 'warden'], boss: true }
     ]
   },
   {
     id: 'ch3', name: 'CINDER REACH', faction: 'solaris',
     blurb: 'They set their own sky on fire to keep the Fold out. It did not work.',
     nodes: [
-      { id: 'c3n1', name: 'Ashfall Landing',  tier: 11, fuel: 14, comp: ['sol_pilgrim', 'sol_pilgrim', 'sol_censor'] },
-      { id: 'c3n2', name: 'The Long Vigil',   tier: 12, fuel: 14, comp: ['sol_pilgrim', 'sol_censor', 'sol_deacon', 'sol_pilgrim'] },
-      { id: 'c3n3', name: 'Reliquary Span',   tier: 13, fuel: 16, comp: ['sol_deacon', 'sol_censor', 'sol_censor'] },
-      { id: 'c3n4', name: 'Furnace Nave',     tier: 14, fuel: 16, comp: ['sol_deacon', 'sol_deacon', 'sol_pilgrim', 'sol_censor'] },
-      { id: 'c3n5', name: 'The Last Sermon',  tier: 15, fuel: 18, comp: ['boss_pyre', 'sol_deacon', 'sol_censor'], boss: true }
+      { id: 'c3n1', name: 'Ashfall Landing',  tier: 11, fuel: 14, comp: ['pilgrim', 'pilgrim', 'censor'] },
+      { id: 'c3n2', name: 'The Long Vigil',   tier: 12, fuel: 14, comp: ['pilgrim', 'censor', 'deacon', 'rook'] },
+      { id: 'c3n3', name: 'Reliquary Span',   tier: 13, fuel: 16, comp: ['deacon', 'censor', 'censor'] },
+      { id: 'c3n4', name: 'Furnace Nave',     tier: 14, fuel: 16, comp: ['deacon', 'dax', 'pilgrim', 'censor'] },
+      { id: 'c3n5', name: 'The Last Sermon',  tier: 15, fuel: 18, comp: ['pyre', 'deacon', 'censor', 'dax'], boss: true }
     ]
   },
   {
     id: 'ch4', name: 'THE BLACK FOLD', faction: 'voidk',
     blurb: 'Space here remembers being something else. It would like to be that again.',
     nodes: [
-      { id: 'c4n1', name: 'Threshold',        tier: 16, fuel: 18, comp: ['void_husk', 'void_husk', 'void_echo'] },
-      { id: 'c4n2', name: 'Recursion',        tier: 17, fuel: 18, comp: ['void_echo', 'void_maw', 'void_husk', 'void_husk'] },
-      { id: 'c4n3', name: 'The Quiet Choir',  tier: 18, fuel: 20, comp: ['void_maw', 'void_maw', 'void_echo'] },
-      { id: 'c4n4', name: 'Unwritten Deck',   tier: 19, fuel: 20, comp: ['void_maw', 'void_echo', 'void_echo', 'void_husk'] },
-      { id: 'c4n5', name: 'The Fold Itself',  tier: 20, fuel: 22, comp: ['boss_fold', 'void_maw', 'void_echo'], boss: true }
+      { id: 'c4n1', name: 'Threshold',        tier: 16, fuel: 18, comp: ['husk', 'husk', 'echo'] },
+      { id: 'c4n2', name: 'Recursion',        tier: 17, fuel: 18, comp: ['echo', 'wraith', 'husk', 'husk'] },
+      { id: 'c4n3', name: 'The Quiet Choir',  tier: 18, fuel: 20, comp: ['wraith', 'edge', 'echo'] },
+      { id: 'c4n4', name: 'Unwritten Deck',   tier: 19, fuel: 20, comp: ['edge', 'echo', 'wraith', 'husk'] },
+      { id: 'c4n5', name: 'The Fold Itself',  tier: 20, fuel: 22, comp: ['nyx', 'edge', 'wraith', 'echo'], boss: true }
     ]
   }
 ];
@@ -271,10 +287,10 @@ const PASS = {
 /* ---------------- daily contracts ---------------- */
 
 const QUESTS = [
-  { id: 'q_deploy',  text: 'Clear 3 sectors',            goal: 3, reward: { chronite: 200 } },
+  { id: 'q_deploy',  text: 'Clear 3 sectors',            goal: 3, reward: { chronite: 220 } },
   { id: 'q_summon',  text: 'Summon once',                goal: 1, reward: { chronite: 150 } },
-  { id: 'q_flawless', text: 'Win without losing a unit', goal: 1, reward: { shards: 10 } },
-  { id: 'q_upgrade', text: 'Upgrade any item',           goal: 1, reward: { scrap: 600 } }
+  { id: 'q_flawless', text: 'Win without losing a champion', goal: 1, reward: { shards: 14 } },
+  { id: 'q_upgrade', text: 'Upgrade a champion or a piece of gear', goal: 1, reward: { scrap: 2400 } }
 ];
 
 const DAILY_LOGIN = { chronite: 250, fuel: 20 };

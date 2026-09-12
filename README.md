@@ -4,7 +4,7 @@ A playable, installable prototype of the sci-fi gacha game from the design
 transcript: summon units, catalogue them in a grid-based armory, assign a
 strike team, and run sectors to earn the currency for the next summon.
 
-**Download:** [`dist/nova-drift-0.2.0-prototype.apk`](dist/nova-drift-0.2.0-prototype.apk) (69 KB)
+**Download:** [`dist/nova-drift-0.3.0-prototype.apk`](dist/nova-drift-0.3.0-prototype.apk) (86 KB)
 
 > This is the game, not a mock-up of one: a native Android package with the
 > systems from the design transcript rebuilt in a stack that ships in seconds
@@ -52,28 +52,31 @@ sideloading, not for distribution.
 
 | System | Detail |
 |---|---|
-| Combat | Turn-based auto-battle with abilities, crits, shields, heals and buffs — animated, skippable, 1–3× speed |
-| Campaign | 4 chapters, 20 nodes, 4 bosses, 3-star objectives per node |
-| Summon | 1× / 10× pulls, animated reveal, rarity-scaled stingers, skip-all |
-| Pity | Guaranteed ENHANCED+ every 10; ASCENDANT soft pity from 60, hard at 70 |
-| Roster | 25 items, each with a combat ability; 18 hostile types across 4 factions |
-| Armory | 4-per-row slot grid, type filters, detail sheet, duplicates → shards |
-| Upgrades | Level 1–10, scrap + shards, +12% base power per level |
+| Champions | 27 heroes, each with 3 skills, a role, an affinity and a faction. Levels 1–40, ascension to 5★ |
+| Gear | 6 slots per hero, 8 sets, main stat + up to 4 substats, upgrades to +16. Gear *is* the build |
+| Combat | Turn-meter battles: SPD fills the meter, whoever fills it first acts. Buffs, debuffs, shields, heals, crits |
+| Affinity | Magic ▸ Spirit ▸ Force ▸ Magic, Void neutral. Strong hits +25%, weak hits −25% and cannot crit |
+| Arena | CSS 3D stage — ground plane in perspective, two ranks at depth, charge animations, skill cut-ins, floating numbers |
+| Art | Every champion drawn procedurally from helmet / build / weapon / accent parameters. No image files ship |
+| Campaign | 4 chapters, 20 nodes, 4 bosses (the ASCENDANTs you can later summon), 3-star objectives |
+| Summon | 1× / 10× pulls, animated reveal, pity: guaranteed ENHANCED+ every 10, ASCENDANT hard pity at 70 |
 | Progression | Drift Pass (30 levels), daily contracts, daily login, first-clear bonuses |
 | Store | Cosmetics, pass, chronite — nothing that touches power. No payment processor is wired up |
-| Audio | Every sound synthesised at runtime — no audio files in the package |
+| Audio | Every sound synthesised at runtime |
 | Save | App-private, HMAC-signed with a non-extractable device key |
 | Security | Zero permissions, no network, locked-down WebView — see [docs/SECURITY.md](docs/SECURITY.md) |
 
-Starting grant: 1,600 chronite (one 10-pull), 1,500 scrap, full fuel, plus a
-three-item starter kit so the first sector is playable before any summon.
+Starting grant: 1,600 chronite (one 10-pull), 4,000 scrap, full fuel, and four
+starter champions — an attacker, a defender, a healer and a body — so the
+first sector is playable before any summon.
 
 ## Monetisation, stated plainly
 
 The game is finishable without paying, and that is measured rather than
 claimed: `node tools/economy.js` drives a free-to-play agent through the real
 systems and reports what it cost. Current result — **5 of 5 runs clear all 20
-nodes for $0.00**, in 2–8 days of aggressive play.
+nodes for $0.00**, in 21–26 days of aggressive play — finishing at champion
+level 15–31 of 40, so there is progression left after the campaign ends.
 
 What the store sells: palettes, squad sigils, commander titles, the premium
 pass track (cosmetic rewards only — every chronite, scrap and shard reward
@@ -94,13 +97,16 @@ android/                      Gradle project (AGP 8.7.3, minSdk 26, targetSdk 34
   app/src/main/assets/game/   the game
     index.html                shell + SVG icon sprite (one symbol per item row)
     css/style.css             console/HUD styling, accents carried by --r
-    js/data.js                items, abilities, rarities, banner, combat + economy tuning
-    js/content.js             enemies, campaign, cosmetics, store, pass, contracts
+    js/data.js                rarities, factions, banner, economy tuning
+    js/heroes.js              the champion roster, skills, affinities, roles
+    js/gear.js                slots, sets, substats, and how a hero's stats assemble
+    js/portrait.js            procedural champion art (busts and standing figures)
+    js/content.js             campaign, hostile lines, cosmetics, store, pass, contracts
     js/storage.js             save layer, shaped like a remote storage engine
     js/state.js               player save + every rule that mutates it
     js/gacha.js               pull rates and both pity systems
-    js/combat.js              the fight — pure logic, emits a timeline
-    js/battle.js              plays that timeline back with animation
+    js/combat.js              turn-meter engine — pure logic, emits a timeline
+    js/battle.js              plays that timeline back on the 3D arena
     js/campaign.js            deploying to a node and paying out
     js/store.js               catalogue, commerce stub, cosmetics
     js/audio.js               every sound, synthesised at runtime
@@ -155,6 +161,15 @@ known limits, and the checklist every new feature has to pass.
 
 ## Known gaps
 
-Deliberately out of scope for a vertical slice: no combat scene (sector runs
-resolve as a single power check), no account or cloud save, no audio, no
-banner rotation, and no real item art — icons are procedural line-art symbols.
+- **Battles are auto only.** Skills are chosen by the AI. Manual skill
+  selection — tapping which ability each champion uses on its turn — is the
+  single biggest thing still missing against the reference.
+- **No arena / PvP, no dungeons, no clan content.** Campaign only.
+- **Champion art is procedural**, not illustrated. It reads well at
+  thumbnail size but it is geometry, not character art.
+- **Saves from 0.2.x reset the collection.** Items became champions and gear;
+  there is no honest conversion. Currency, campaign progress and purchases
+  carry over.
+- **Everything is client-side** — rolls, combat and rewards. See
+  [docs/SECURITY.md](docs/SECURITY.md) for what has to move server-side
+  before any of it handles money.

@@ -1,14 +1,14 @@
 /* ------------------------------------------------------------------
  * state.js — the player save and every rule that mutates it.
  *
- * Nothing here draws: screens read from State and call these methods,
- * which is what keeps the pull maths testable outside the UI.
+ * Two collections matter: heroes (summoned, levelled, ascended) and
+ * gear (dropped, upgraded, equipped onto heroes). Nothing here draws.
  * ------------------------------------------------------------------ */
 
 const State = (() => {
   const COLLECTION = 'player';
   const KEY = 'save';
-  const SAVE_VERSION = 1;
+  const SAVE_VERSION = 2;
 
   let data = null;
   let saveTimer = null;
@@ -23,29 +23,22 @@ const State = (() => {
         shards: 0
       },
       fuel: { amount: ECONOMY.fuelCap, lastTick: Date.now() },
-      // itemId -> { level, copies, obtainedAt }
-      inventory: {},
-      squad: [null, null, null],
+
+      // heroId -> { level, stars, copies, equipped: {slot: gearId}, obtainedAt }
+      heroes: {},
+      // gearId -> gear item
+      gear: {},
+      team: [null, null, null, null],
+
       pity: { sinceLegendary: 0, sinceRare: 0 },
-
-      // campaign progress: nodeId -> best star count
       campaign: { stars: {}, lastNode: null },
-
-      // drift pass
       pass: { xp: 0, level: 1, claimedFree: [], claimedPremium: [] },
-
-      // daily contracts, rerolled on date change
       quests: { day: null, progress: {}, claimed: [] },
       login: { lastDay: null, streak: 0 },
 
-      // purchases. Everything here is cosmetic or currency — never power.
       entitlements: {
-        themes: ['drift'],
-        sigils: ['nova'],
-        titles: ['drifter', 'salvager'],
-        passPremium: false,
-        supporter: false,
-        supporterLastPaid: null
+        themes: ['drift'], sigils: ['nova'], titles: ['drifter', 'salvager'],
+        passPremium: false, supporter: false, supporterLastPaid: null
       },
       cosmetics: { theme: 'drift', sigil: 'nova', title: 'drifter' },
       settings: { sfx: true, music: true, battleSpeed: 1 },
@@ -58,9 +51,29 @@ const State = (() => {
     };
   }
 
-  /** Older saves keep their progress and gain whatever fields are new. */
+  /**
+   * Saves from before the hero rewrite held items, not champions, and
+   * there is no honest way to convert one into the other. Currency,
+   * campaign progress and purchases carry over; the collection restarts.
+   */
   function migrate(save) {
     const base = freshSave();
+    if (!save.saveVersion || save.saveVersion < 2) {
+      const carried = Object.assign(base, {
+        wallet: Object.assign(base.wallet, save.wallet),
+        campaign: Object.assign(base.campaign, save.campaign),
+        pass: Object.assign(base.pass, save.pass),
+        entitlements: Object.assign(base.entitlements, save.entitlements),
+        cosmetics: Object.assign(base.cosmetics, save.cosmetics),
+        settings: Object.assign(base.settings, save.settings),
+        stats: Object.assign(base.stats, save.stats),
+        saveVersion: SAVE_VERSION,
+        heroes: {}, gear: {}, team: [null, null, null, null]
+      });
+      carried.log = [{ text: 'Roster rebuilt for the champion system.', tone: 'info', at: Date.now() }];
+      return carried;
+    }
+
     const merged = Object.assign(base, save);
     ['wallet', 'fuel', 'pity', 'stats', 'campaign', 'pass', 'quests',
      'login', 'entitlements', 'cosmetics', 'settings'].forEach(key => {
@@ -72,12 +85,12 @@ const State = (() => {
   async function load() {
     const record = await SaveStore.read(COLLECTION, KEY);
     data = record && record.value ? migrate(record.value) : freshSave();
+    Gear.seedIds(Object.keys(data.gear).map(id => data.gear[id]));
     tickFuel();
     return data;
   }
 
   function save() {
-    // Coalesce the burst of writes a ten-pull produces into one commit.
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
@@ -104,17 +117,12 @@ const State = (() => {
   function tickFuel() {
     const now = Date.now();
     const fuel = data.fuel;
-    if (fuel.amount >= ECONOMY.fuelCap) {
-      fuel.lastTick = now;
-      return;
-    }
-    const elapsed = now - fuel.lastTick;
-    const gained = Math.floor(elapsed / ECONOMY.fuelRegenMs);
+    if (fuel.amount >= ECONOMY.fuelCap) { fuel.lastTick = now; return; }
+    const gained = Math.floor((now - fuel.lastTick) / ECONOMY.fuelRegenMs);
     if (gained > 0) {
       fuel.amount = Math.min(ECONOMY.fuelCap, fuel.amount + gained);
       fuel.lastTick = fuel.amount >= ECONOMY.fuelCap
-        ? now
-        : fuel.lastTick + gained * ECONOMY.fuelRegenMs;
+        ? now : fuel.lastTick + gained * ECONOMY.fuelRegenMs;
       save();
     }
   }
@@ -126,9 +134,7 @@ const State = (() => {
 
   /* ---------------- wallet ---------------- */
 
-  function canAfford(currency, amount) {
-    return data.wallet[currency] >= amount;
-  }
+  const canAfford = (currency, amount) => data.wallet[currency] >= amount;
 
   function spend(currency, amount) {
     if (!canAfford(currency, amount)) return false;
@@ -142,123 +148,214 @@ const State = (() => {
     save();
   }
 
-  /* ---------------- inventory ---------------- */
+  /* ---------------- heroes ---------------- */
 
-  /**
-   * Add one copy of an item. First copy unlocks it; every copy after that
-   * becomes shards, which is the prototype's duplicate-protection rule.
-   */
-  function addItem(itemId) {
-    const row = getItemRow(itemId);
-    if (!row) return null;
-
-    const rarity = RARITY[row.rarity];
-    const existing = data.inventory[itemId];
+  /** First copy recruits; every copy after becomes ascension material. */
+  function addHero(heroId) {
+    const hero = getHero(heroId);
+    if (!hero) return null;
+    const rarity = RARITY[hero.rarity];
+    const existing = data.heroes[heroId];
 
     if (!existing) {
-      data.inventory[itemId] = { level: 1, copies: 1, obtainedAt: Date.now() };
+      data.heroes[heroId] = {
+        level: 1, stars: 1, copies: 1, equipped: {}, obtainedAt: Date.now()
+      };
       save();
-      return { itemId, isNew: true, shards: 0, scrap: 0 };
+      return { heroId, isNew: true, shards: 0, scrap: 0 };
     }
 
     existing.copies += 1;
     data.wallet.shards += rarity.shards;
     data.wallet.scrap += rarity.scrap;
     save();
-    return { itemId, isNew: false, shards: rarity.shards, scrap: rarity.scrap };
+    return { heroId, isNew: false, shards: rarity.shards, scrap: rarity.scrap };
   }
 
-  function owned(itemId) { return !!data.inventory[itemId]; }
+  const ownsHero = heroId => !!data.heroes[heroId];
+  const heroEntry = heroId => data.heroes[heroId] || null;
+  const gearOf = gearId => (gearId && data.gear[gearId]) || null;
 
-  /** Ids only, in the order the armory should show them. */
-  function inventoryIds() {
-    return Object.keys(data.inventory).sort((a, b) => {
-      const ra = RARITY_ORDER.indexOf(getItemRow(a).rarity);
-      const rb = RARITY_ORDER.indexOf(getItemRow(b).rarity);
-      if (ra !== rb) return ra - rb;
-      return getPower(b) - getPower(a);
+  /** Assembled stats for an owned hero, gear and sets included. */
+  function statsFor(heroId) {
+    const hero = getHero(heroId);
+    const owned = data.heroes[heroId];
+    if (!hero || !owned) return null;
+    return heroStats(hero, owned, gearOf);
+  }
+
+  function heroPower(heroId) {
+    const stats = statsFor(heroId);
+    return stats ? stats.power : 0;
+  }
+
+  /** Roster order: rarity first, then what is actually strongest. */
+  function roster() {
+    return Object.keys(data.heroes).sort((a, b) => {
+      const ra = RARITY_ORDER.indexOf(getHero(a).rarity);
+      const rb = RARITY_ORDER.indexOf(getHero(b).rarity);
+      return ra !== rb ? ra - rb : heroPower(b) - heroPower(a);
     });
   }
 
-  function getEntry(itemId) { return data.inventory[itemId] || null; }
-
-  /** Effective power: base row power scaled by the item's level. */
-  function getPower(itemId) {
-    const row = getItemRow(itemId);
-    const entry = data.inventory[itemId];
-    if (!row) return 0;
-    const level = entry ? entry.level : 1;
-    return Math.round(row.power * (1 + (level - 1) * ECONOMY.powerPerLevel));
+  function levelCost(heroId) {
+    const owned = data.heroes[heroId];
+    if (!owned) return null;
+    return { scrap: ECONOMY.levelScrap(owned.level, getHero(heroId).rarity) };
   }
 
-  function upgradeCost(itemId) {
-    const entry = data.inventory[itemId];
-    if (!entry) return null;
-    return {
-      scrap: ECONOMY.upgradeScrap(entry.level),
-      shards: ECONOMY.upgradeShards(entry.level)
-    };
+  function canLevel(heroId) {
+    const owned = data.heroes[heroId];
+    if (!owned || owned.level >= HERO_MAX_LEVEL) return false;
+    return data.wallet.scrap >= levelCost(heroId).scrap;
   }
 
-  function canUpgrade(itemId) {
-    const entry = data.inventory[itemId];
-    if (!entry || entry.level >= ECONOMY.levelCap) return false;
-    const cost = upgradeCost(itemId);
-    return data.wallet.scrap >= cost.scrap && data.wallet.shards >= cost.shards;
-  }
-
-  function upgrade(itemId) {
-    if (!canUpgrade(itemId)) return false;
-    const cost = upgradeCost(itemId);
-    data.wallet.scrap -= cost.scrap;
-    data.wallet.shards -= cost.shards;
-    data.inventory[itemId].level += 1;
+  function levelHero(heroId) {
+    if (!canLevel(heroId)) return false;
+    data.wallet.scrap -= levelCost(heroId).scrap;
+    data.heroes[heroId].level += 1;
     save();
     return true;
   }
 
-  /* ---------------- squad ---------------- */
+  function ascendCost(heroId) {
+    const owned = data.heroes[heroId];
+    if (!owned) return null;
+    return { shards: ECONOMY.ascendShards(owned.stars) };
+  }
 
-  function setSquadSlot(index, itemId) {
-    // An item can only be deployed once; clear it from any other slot first.
-    if (itemId) {
-      data.squad = data.squad.map(id => (id === itemId ? null : id));
+  function canAscend(heroId) {
+    const owned = data.heroes[heroId];
+    if (!owned || owned.stars >= HERO_MAX_STARS) return false;
+    return data.wallet.shards >= ascendCost(heroId).shards;
+  }
+
+  function ascendHero(heroId) {
+    if (!canAscend(heroId)) return false;
+    data.wallet.shards -= ascendCost(heroId).shards;
+    data.heroes[heroId].stars += 1;
+    save();
+    return true;
+  }
+
+  /* ---------------- gear ---------------- */
+
+  function addGear(item) {
+    data.gear[item.id] = item;
+    save();
+    return item;
+  }
+
+  function gearList(filter) {
+    const all = Object.keys(data.gear).map(id => data.gear[id]);
+    const list = filter ? all.filter(filter) : all;
+    return list.sort((a, b) => Gear.score(b) - Gear.score(a));
+  }
+
+  /** Equips onto a hero, moving the piece off whoever else had it. */
+  function equipGear(heroId, gearId) {
+    const owned = data.heroes[heroId];
+    const item = data.gear[gearId];
+    if (!owned || !item) return false;
+
+    if (item.equipped && item.equipped !== heroId) {
+      const previous = data.heroes[item.equipped];
+      if (previous && previous.equipped[item.slot] === gearId) {
+        delete previous.equipped[item.slot];
+      }
     }
-    data.squad[index] = itemId;
+
+    const displaced = owned.equipped[item.slot];
+    if (displaced && data.gear[displaced]) data.gear[displaced].equipped = null;
+
+    owned.equipped[item.slot] = gearId;
+    item.equipped = heroId;
+    save();
+    return true;
+  }
+
+  function unequipGear(heroId, slot) {
+    const owned = data.heroes[heroId];
+    if (!owned) return false;
+    const gearId = owned.equipped[slot];
+    if (gearId && data.gear[gearId]) data.gear[gearId].equipped = null;
+    delete owned.equipped[slot];
+    save();
+    return true;
+  }
+
+  function upgradeGearCost(gearId) {
+    const item = data.gear[gearId];
+    return item ? Gear.upgradeCost(item) : null;
+  }
+
+  function canUpgradeGear(gearId) {
+    const item = data.gear[gearId];
+    if (!item || item.level >= GEAR_MAX_LEVEL) return false;
+    const cost = Gear.upgradeCost(item);
+    return data.wallet.scrap >= cost.scrap && data.wallet.shards >= cost.shards;
+  }
+
+  function upgradeGear(gearId) {
+    if (!canUpgradeGear(gearId)) return null;
+    const item = data.gear[gearId];
+    const cost = Gear.upgradeCost(item);
+    data.wallet.scrap -= cost.scrap;
+    data.wallet.shards -= cost.shards;
+    const result = Gear.upgrade(item);
+    save();
+    return result;
+  }
+
+  /** Scrapping unwanted gear is the main scrap faucet outside battle. */
+  function sellGear(gearId) {
+    const item = data.gear[gearId];
+    if (!item) return 0;
+    if (item.equipped) unequipGear(item.equipped, item.slot);
+    const value = Math.round(60 * (1 + item.tier * 0.1) * (1 + item.level * 0.25)
+                  * (item.rarity === 'legendary' ? 3 : item.rarity === 'epic' ? 2 : 1));
+    delete data.gear[gearId];
+    data.wallet.scrap += value;
+    save();
+    return value;
+  }
+
+  /* ---------------- team ---------------- */
+
+  function setTeamSlot(index, heroId) {
+    if (heroId) data.team = data.team.map(id => (id === heroId ? null : id));
+    data.team[index] = heroId;
     save();
   }
 
-  function squadPower(threatFaction) {
-    return data.squad.reduce((total, itemId) => {
-      if (!itemId) return total;
-      const row = getItemRow(itemId);
-      let power = getPower(itemId);
-      if (threatFaction && row.faction === threatFaction) power = Math.round(power * 1.2);
-      return total + power;
-    }, 0);
+  function teamPower() {
+    return data.team.reduce((total, id) => total + (id ? heroPower(id) : 0), 0);
   }
 
-  function autoSquad() {
-    const best = inventoryIds()
-      .slice()
-      .sort((a, b) => getPower(b) - getPower(a))
-      .slice(0, 3);
-    data.squad = [best[0] || null, best[1] || null, best[2] || null];
+  function autoTeam() {
+    const best = roster().slice().sort((a, b) => heroPower(b) - heroPower(a));
+    data.team = [0, 1, 2, 3].map(i => best[i] || null);
     save();
+  }
+
+  /** Units ready for Combat.resolve. */
+  function teamUnits() {
+    return data.team.filter(Boolean).map(id => ({
+      hero: getHero(id),
+      stats: statsFor(id)
+    }));
   }
 
   /* ---------------- campaign ---------------- */
 
-  function starsOn(nodeId) { return data.campaign.stars[nodeId] || 0; }
+  const starsOn = nodeId => data.campaign.stars[nodeId] || 0;
+  const isCleared = nodeId => starsOn(nodeId) > 0;
 
   function totalStars() {
     return Object.keys(data.campaign.stars)
       .reduce((sum, id) => sum + data.campaign.stars[id], 0);
   }
 
-  function isCleared(nodeId) { return starsOn(nodeId) > 0; }
-
-  /** Nodes unlock in order; the first one is always open. */
   function isUnlocked(nodeId) {
     const index = ALL_NODES.findIndex(n => n.id === nodeId);
     if (index <= 0) return index === 0;
@@ -269,14 +366,12 @@ const State = (() => {
     return ALL_NODES.find(n => !isCleared(n.id)) || ALL_NODES[ALL_NODES.length - 1];
   }
 
-  /** Records a clear, keeping the best star count. Returns what is new. */
   function recordClear(nodeId, stars) {
     const previous = starsOn(nodeId);
-    const firstClear = previous === 0;
     if (stars > previous) data.campaign.stars[nodeId] = stars;
     data.campaign.lastNode = nodeId;
     save();
-    return { firstClear, improved: stars > previous, previous };
+    return { firstClear: previous === 0, improved: stars > previous, previous };
   }
 
   /* ---------------- drift pass ---------------- */
@@ -309,11 +404,10 @@ const State = (() => {
     return reward;
   }
 
-  /* ---------------- daily contracts ---------------- */
+  /* ---------------- dailies ---------------- */
 
   const today = () => new Date().toISOString().slice(0, 10);
 
-  /** Rolls the day over if needed. Safe to call on every render. */
   function ensureDaily() {
     if (data.quests.day === today()) return false;
     data.quests.day = today();
@@ -323,14 +417,13 @@ const State = (() => {
     return true;
   }
 
-  function questProgress(questId) { return data.quests.progress[questId] || 0; }
+  const questProgress = questId => data.quests.progress[questId] || 0;
 
   function advanceQuest(questId, amount) {
     ensureDaily();
     const quest = QUESTS.find(q => q.id === questId);
     if (!quest) return;
-    const next = Math.min(quest.goal, questProgress(questId) + (amount || 1));
-    data.quests.progress[questId] = next;
+    data.quests.progress[questId] = Math.min(quest.goal, questProgress(questId) + (amount || 1));
     save();
   }
 
@@ -349,7 +442,7 @@ const State = (() => {
     return quest.reward;
   }
 
-  function loginClaimable() { return data.login.lastDay !== today(); }
+  const loginClaimable = () => data.login.lastDay !== today();
 
   function claimLogin() {
     if (!loginClaimable()) return null;
@@ -362,7 +455,6 @@ const State = (() => {
     return { chronite: DAILY_LOGIN.chronite, fuel: DAILY_LOGIN.fuel, streak: data.login.streak };
   }
 
-  /** Supporter pays a daily trickle; convenience, never power. */
   function collectSupporter() {
     if (!data.entitlements.supporter) return null;
     if (data.entitlements.supporterLastPaid === today()) return null;
@@ -372,7 +464,7 @@ const State = (() => {
     return { chronite: 150 };
   }
 
-  /* ---------------- entitlements and cosmetics ---------------- */
+  /* ---------------- entitlements ---------------- */
 
   function owns(kind, ref) {
     const list = data.entitlements[kind];
@@ -385,17 +477,9 @@ const State = (() => {
     save();
   }
 
-  function setCosmetic(slot, ref) {
-    data.cosmetics[slot] = ref;
-    save();
-  }
+  function setCosmetic(slot, ref) { data.cosmetics[slot] = ref; save(); }
+  function setSetting(key, value) { data.settings[key] = value; save(); }
 
-  function setSetting(key, value) {
-    data.settings[key] = value;
-    save();
-  }
-
-  /** Applies a reward object of any shape: currency, xp or a cosmetic. */
   function grantBundle(reward) {
     if (!reward) return;
     if (reward.chronite) data.wallet.chronite += reward.chronite;
@@ -411,8 +495,6 @@ const State = (() => {
     save();
   }
 
-  /* ---------------- log ---------------- */
-
   function pushLog(text, tone) {
     data.log.unshift({ text, tone: tone || 'info', at: Date.now() });
     data.log = data.log.slice(0, 20);
@@ -423,9 +505,11 @@ const State = (() => {
     load, save, flush, reset, get,
     tickFuel, msToNextFuel,
     canAfford, spend, grant, grantBundle,
-    addItem, owned, inventoryIds, getEntry, getPower,
-    upgradeCost, canUpgrade, upgrade,
-    setSquadSlot, squadPower, autoSquad,
+    addHero, ownsHero, heroEntry, statsFor, heroPower, roster,
+    levelCost, canLevel, levelHero, ascendCost, canAscend, ascendHero,
+    addGear, gearList, gearOf, equipGear, unequipGear,
+    upgradeGearCost, canUpgradeGear, upgradeGear, sellGear,
+    setTeamSlot, teamPower, autoTeam, teamUnits,
     starsOn, totalStars, isCleared, isUnlocked, nextNode, recordClear,
     addPassXp, passClaimable, claimPass,
     ensureDaily, questProgress, advanceQuest, questClaimable, claimQuest,

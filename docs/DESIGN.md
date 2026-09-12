@@ -56,44 +56,75 @@ one on the harder sectors.
   detail sheet with upgrade.
 - **SYSTEM** — service record, full log, save wipe.
 
+## Champions and gear
+
+Champions are what you summon; gear is what makes them. A champion carries a
+role (attack / defense / support / vitality), an affinity, a faction, three
+skills, and base stats shaped by its rarity. Six gear slots hang off it —
+weapon, helmet, shield, gauntlets, chestplate, boots — each with a main stat
+fixed by slot and up to four substats decided by rarity, upgradable to +16.
+
+The split matters: a naked legendary is about 5,000 power, the same champion
+in a full set of upgraded gear is 10,000, and maxed it passes 45,000. Pulling
+a good champion is the start of building one, not the end.
+
+Set bonuses stack per completed set, so six pieces of a 2-piece set is that
+bonus three times. Boots are the only source of flat SPD, which is the stat
+the turn meter runs on — that is deliberate, and it is why a speed roll on
+boots is the thing worth chasing.
+
 ## Combat
 
-Turn-based, three units against a hostile line of three to five. Every item
-carries an ability on a cooldown — strike, volley, execute, siphon, mend, ward
-or rally — so a squad is a composition, not a sum. Units act in speed order,
-damage swings +/-22%, crits multiply by 1.8, and shields absorb before health.
+Turn-meter, four champions against three to five hostiles. Every unit fills a
+meter at a rate set by SPD; whoever fills it first acts. A1 has no cooldown,
+A2 and A3 do, and the AI picks the strongest ready skill that is not wasted
+(it will not heal a healthy team or re-apply a buff already up).
 
-Combat derives entirely from the power number the armory already shows, so a
-player never has to learn a second stat system: HP is power x 4.2, attack is
-power, and matching a sector's faction adds 20%.
+Damage compares the target's defence to the *attacker's own attack* rather
+than to a fixed constant. That sounds like a detail and is not: with a flat
+constant the late game strangles, because both sides' stats are ten times
+bigger than the constant. Fights ran past a hundred turns before this changed.
 
-The engine (`js/combat.js`) resolves a whole fight up front and returns a
-timeline of events; `js/battle.js` animates that timeline. Keeping those apart
-is what lets `tools/balance.js` run thousands of fights headlessly.
+The affinity triangle — Magic ▸ Spirit ▸ Force ▸ Magic, Void neutral — gives
+±25% damage, and a weak hit cannot crit at all. That second rule is what makes
+a bad matchup feel bad rather than marginally worse.
+
+## The arena
+
+A real CSS 3D stage, not a row of cards: a ground plane rotated away from the
+camera with a grid printed on it, two ranks of billboarded figures at
+different depths and scales, a skyline of wrecked hulls behind, and attackers
+that travel a third of the way toward their target and spring back. Skills
+above A1 get a cut-in with the champion's portrait. Crits shake the camera.
+
+Champion art is procedural: a helmet type, a body build, a weapon and an
+accent colour assemble into a bust for cards and a standing figure for the
+arena. No image files ship in the package.
 
 ## Difficulty and pacing, as measured
 
 Encounters are budgeted against an explicit power curve — what a player
-plausibly fields at each tier — rather than a compounding multiplier. Pressure
-values per chapter are solved by `tools/calibrate.js` to hit ~85% win on
-normal nodes and ~60% on bosses for a squad sitting on the curve.
+plausibly fields at each tier — rather than a compounding multiplier.
+Pressure per chapter is solved by `tools/calibrate.js` for ~85% win on normal
+nodes and ~60% on bosses at curve.
 
-Below the curve the drop is steep: a squad at 75% power wins almost nothing.
-That is inherent to a damage race, and the fix is honesty rather than
-softening — the briefing screen shows recommended power, your power, and live
-Monte-Carlo odds before any fuel is spent.
+The curve's tail is set from what a free account *actually reaches*, not from
+the theoretical maximum. A perfectly geared team of four maxed ASCENDANTs
+would be near 190,000 power; `tools/economy.js` shows a well-played free
+account plateauing at 95,000-120,000, because real gear is whatever dropped.
+An earlier tail of 149,000 left the last two nodes unwinnable for a maxed
+account sitting on a million unspent scrap.
 
-Free-to-play completion is measured by `tools/economy.js`: 5 of 5 simulated
-runs clear all 20 nodes for nothing, in 2-8 days of aggressive play, taking
-120-170 summons and 2-4 ASCENDANTs on the way.
+Free-to-play completion: 5 of 5 simulated runs clear all 20 nodes for
+nothing, in 21-26 days, finishing at champion level 15-31 of 40 — so the
+campaign ends before the build does.
 
 ## What a next pass should add
 
-1. Server-authoritative pulls and combat — both are client-side today.
-2. More roster: 25 items and 3 legendaries is thin for a gacha, and it caps
-   how long the collection stays interesting.
-3. Banner rotation with a pity counter per banner.
-4. Item art and a first-run tutorial beat.
-5. More campaign: 20 nodes is a few days of content, and the limit on playtime
-   is content, not monetisation — which is the right way round, but it does
-   mean the game currently ends.
+1. **Manual battles.** Skills are AI-picked today. Letting the player choose
+   which ability fires on each turn is the biggest gap against the reference,
+   and it needs the engine to become step-wise rather than pre-resolved.
+2. Server-authoritative pulls and combat — both are client-side today.
+3. Arena / PvP, dungeons that drop specific sets, and a clan layer.
+4. Banner rotation with a pity counter per banner.
+5. More campaign, and a first-run tutorial beat.

@@ -32,18 +32,18 @@ const Gacha = (() => {
     return 'common';
   }
 
-  function pickItem(rarityId) {
+  function pickHero(rarityId) {
     if (rarityId === 'legendary' && Math.random() < BANNER.featuredChance) {
       return BANNER.featured;
     }
-    const pool = itemsOfRarity(rarityId);
+    const pool = heroesOfRarity(rarityId);
     return pool[Math.floor(Math.random() * pool.length)].id;
   }
 
   function rollOnce() {
     const save = State.get();
     const rarityId = rollRarity(save.pity);
-    const itemId = pickItem(rarityId);
+    const heroId = pickHero(rarityId);
 
     if (rarityId === 'legendary') {
       save.pity.sinceLegendary = 0;
@@ -59,14 +59,14 @@ const Gacha = (() => {
 
     save.stats.pulls += 1;
 
-    const result = State.addItem(itemId);
+    const result = State.addHero(heroId);
     return {
-      itemId,
+      heroId,
       rarity: rarityId,
       isNew: result.isNew,
       shards: result.shards,
       scrap: result.scrap,
-      featured: itemId === BANNER.featured
+      featured: heroId === BANNER.featured
     };
   }
 
@@ -84,7 +84,7 @@ const Gacha = (() => {
     const best = results.reduce((a, b) =>
       RARITY_ORDER.indexOf(b.rarity) < RARITY_ORDER.indexOf(a.rarity) ? b : a);
     State.pushLog(
-      `Summoned ${count}× — best pull ${getItemRow(best.itemId).name}`,
+      `Summoned ${count}× — best pull ${getHero(best.heroId).name}`,
       best.rarity === 'legendary' ? 'gold' : 'info'
     );
     State.save();

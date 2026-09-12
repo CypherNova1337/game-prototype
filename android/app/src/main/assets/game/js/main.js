@@ -39,12 +39,22 @@
 
   function firstRunGrant() {
     const save = State.get();
-    if (Object.keys(save.inventory).length > 0) return;
+    if (Object.keys(save.heroes).length > 0) return;
 
-    // A starter kit so DEPLOY is usable before the first summon.
-    ['op_rook', 'wep_m4x', 'gear_scout'].forEach(id => State.addItem(id));
-    State.autoSquad();
-    State.pushLog('Drifter registered. Standard kit issued.', 'info');
+    // A starter four so the first sector is playable before any summon:
+    // an attacker, a defender, a healer and a body.
+    ['rook', 'picker', 'medtech', 'plating'].forEach(id => State.addHero(id));
+    State.autoTeam();
+
+    // One piece of gear each, so the equip screen is not an empty room.
+    ['weapon', 'helmet', 'chest', 'boots'].forEach((slot, i) => {
+      const item = Gear.create({ slot, rarity: 'common', tier: 1, set: i < 2 ? 'life' : 'offense' });
+      State.addGear(item);
+      const heroId = State.get().team[i];
+      if (heroId) State.equipGear(heroId, item.id);
+    });
+
+    State.pushLog('Drifter registered. Four champions assigned.', 'info');
   }
 
   function applyAudioSettings() {
@@ -100,7 +110,7 @@
   // Exposed for MainActivity's hardware back-button bridge.
   window.Nova = {
     handleBack: () => UI.handleBack(),
-    version: '0.2.0'
+    version: '0.3.0'
   };
 
   if (document.readyState === 'loading') {

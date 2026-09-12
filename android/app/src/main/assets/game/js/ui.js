@@ -1,9 +1,9 @@
 /* ------------------------------------------------------------------
- * ui.js — every screen, slot and overlay.
+ * ui.js — every screen, card and overlay.
  *
  * Screens render as HTML strings into #screen and are driven by
  * delegated clicks on [data-act], so nothing needs re-binding after a
- * repaint. The battle screen is the exception: it owns its own DOM and
+ * repaint. The battle arena is the exception: it owns its own DOM and
  * mutates it in place (see battle.js).
  * ------------------------------------------------------------------ */
 
@@ -16,9 +16,12 @@ const UI = (() => {
   const toastEl = document.getElementById('toast');
 
   let current = 'campaign';
-  let armoryFilter = 'ALL';
-  let pendingSquadSlot = null;
+  let rosterTab = 'champions';
+  let gearFilter = 'ALL';
   let storeTab = 'pass';
+  let pendingTeamSlot = null;
+  let pendingGearSlot = null;
+  let pendingHero = null;
 
   /* ---------------- helpers ---------------- */
 
@@ -27,8 +30,8 @@ const UI = (() => {
   const esc = s => String(s).replace(/[&<>"]/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const money = n => '$' + n.toFixed(2);
+  const pct = n => Math.round(n * 100) + '%';
 
-  /** Inline custom properties for a rarity or faction accent. */
   function accent(def, extra) {
     return `--r:${def.color};--edge:${def.edge || def.color};`
          + `--tint:${def.tint || 'transparent'};--glow:${def.glow || def.color};`
@@ -83,12 +86,14 @@ const UI = (() => {
   }
 
   const TABS = [
-    { id: 'campaign', label: 'DEPLOY', icon: 'ic-deploy' },
-    { id: 'summon',   label: 'SUMMON', icon: 'ic-summon' },
-    { id: 'armory',   label: 'ARMORY', icon: 'ic-armory' },
-    { id: 'store',    label: 'STORE',  icon: 'ic-chronite' },
-    { id: 'system',   label: 'SYSTEM', icon: 'ic-system' }
+    { id: 'campaign', label: 'DEPLOY',  icon: 'ic-deploy' },
+    { id: 'summon',   label: 'SUMMON',  icon: 'ic-summon' },
+    { id: 'roster',   label: 'ROSTER',  icon: 'ic-armory' },
+    { id: 'store',    label: 'STORE',   icon: 'ic-chronite' },
+    { id: 'system',   label: 'SYSTEM',  icon: 'ic-system' }
   ];
+
+  const anyQuestReady = () => QUESTS.some(q => State.questClaimable(q.id));
 
   function renderNav() {
     navEl.innerHTML = TABS.map(t => {
@@ -101,26 +106,26 @@ const UI = (() => {
     }).join('');
   }
 
-  function anyQuestReady() {
-    return QUESTS.some(q => State.questClaimable(q.id));
-  }
+  /* ---------------- champion card ---------------- */
 
-  /* ---------------- item slot ---------------- */
-
-  /** One inventory tile. The prototype's WBP_ItemSlot. */
-  function slotHTML(itemId, opts) {
+  function heroCard(heroId, opts) {
     opts = opts || {};
-    if (!itemId) {
-      return `<button class="slot empty" ${opts.attrs || ''}><span class="small dim">EMPTY</span></button>`;
-    }
-    const row = getItemRow(itemId);
-    const entry = State.getEntry(itemId);
-    const rarity = RARITY[row.rarity];
+    const hero = getHero(heroId);
+    const owned = State.heroEntry(heroId);
+    const rarity = RARITY[hero.rarity];
+    const affinity = AFFINITY[hero.affinity];
+    const deployed = State.get().team.indexOf(heroId) !== -1;
+
     return `
-      <button class="slot" style="${accent(rarity)}" ${opts.attrs || ''}>
-        ${icon(row.icon, 'glyph')}
-        ${entry && entry.level > 1 ? `<span class="lv">LV${entry.level}</span>` : ''}
-        ${entry && entry.copies > 1 ? `<span class="copies">×${entry.copies}</span>` : ''}
+      <button class="hero-card" style="${accent(rarity)}" ${opts.attrs || ''}>
+        ${Portrait.bust(hero)}
+        <span class="lvtag">LV${owned ? owned.level : 1}</span>
+        <span class="afftag" style="background:${affinity.color};color:${affinity.color}"></span>
+        ${deployed && !opts.hideDeployed ? '<span class="deployed">DEPLOYED</span>' : ''}
+        <span class="nameplate">
+          <span class="nm">${esc(hero.name)}</span>
+          <span class="hstars">${stars(owned ? owned.stars : 1, HERO_MAX_STARS)}</span>
+        </span>
       </button>`;
   }
 
@@ -130,12 +135,14 @@ const UI = (() => {
     const save = State.get();
     const sigil = Cosmetics.sigil();
 
-    const squadHTML = save.squad.map((itemId, i) => {
-      const row = itemId ? getItemRow(itemId) : null;
-      return `<div>
-        ${slotHTML(itemId, { attrs: `data-act="pick-squad" data-slot="${i}"` })}
-        <div class="squad-name">${row ? esc(row.name) : 'SELECT'}</div>
-      </div>`;
+    const teamHTML = save.team.map((heroId, i) => {
+      const hero = heroId ? getHero(heroId) : null;
+      return `
+        <button class="team-slot ${hero ? 'filled' : ''}"
+                style="${hero ? accent(RARITY[hero.rarity]) : ''}"
+                data-act="pick-team" data-slot="${i}">
+          ${hero ? Portrait.bust(hero) + `<span class="tname">${esc(hero.name)}</span>` : 'EMPTY'}
+        </button>`;
     }).join('');
 
     const next = State.nextNode();
@@ -182,11 +189,11 @@ const UI = (() => {
         <div class="title">STRIKE TEAM
           <span class="sigil-badge" style="margin-left:auto">${icon(sigil.icon)}${esc(sigil.name)}</span>
         </div>
-        <div class="squad">${squadHTML}</div>
+        <div class="team-slots">${teamHTML}</div>
         <div class="power-readout">
-          <span class="small dim">SQUAD POWER</span>
-          <b class="num">${fmt(State.squadPower(null))}</b>
-          <button class="btn ghost" style="width:auto;padding:7px 12px" data-act="auto-squad">AUTO</button>
+          <span class="small dim">TEAM POWER</span>
+          <b class="num">${fmt(State.teamPower())}</b>
+          <button class="btn ghost" style="width:auto;padding:7px 12px" data-act="auto-team">AUTO</button>
         </div>
       </section>
 
@@ -196,9 +203,6 @@ const UI = (() => {
           const done = State.questProgress(q.id);
           const ready = State.questClaimable(q.id);
           const claimed = State.get().quests.claimed.indexOf(q.id) !== -1;
-          const reward = q.reward.chronite ? `${q.reward.chronite} chronite`
-                       : q.reward.shards ? `${q.reward.shards} shards`
-                       : `${q.reward.scrap} scrap`;
           return `
             <div class="contract">
               <div class="info">
@@ -209,10 +213,6 @@ const UI = (() => {
                 ${ready ? '' : 'disabled'}>${claimed ? 'DONE' : ready ? 'CLAIM' : `${done}/${q.goal}`}</button>
             </div>`;
         }).join('')}
-        <p class="small dim" style="margin:10px 0 0">${esc('Rewards: ' + QUESTS.map(q =>
-          q.reward.chronite ? q.reward.chronite + ' chronite'
-          : q.reward.shards ? q.reward.shards + ' shards'
-          : q.reward.scrap + ' scrap').join(' · '))}</p>
       </section>
 
       ${chaptersHTML}`;
@@ -222,7 +222,7 @@ const UI = (() => {
 
   function screenSummon() {
     const save = State.get();
-    const feature = getItemRow(BANNER.featured);
+    const feature = getHero(BANNER.featured);
     const chance = Gacha.legendaryChance(save.pity.sinceLegendary);
     const pityPct = Math.min(100, (save.pity.sinceLegendary / BANNER.pity.hard) * 100);
 
@@ -238,6 +238,7 @@ const UI = (() => {
     return `
       <section class="banner">
         <div class="rays"></div>
+        <div class="banner-art">${Portrait.figure(feature)}</div>
         <div class="copy">
           <h1>${esc(BANNER.name)}</h1>
           <p>${esc(BANNER.subtitle)}</p>
@@ -247,7 +248,6 @@ const UI = (() => {
             Guaranteed ASCENDANT at ${BANNER.pity.hard}
           </div>
         </div>
-        ${icon(feature.icon, 'feature')}
       </section>
 
       <section class="panel">
@@ -274,48 +274,87 @@ const UI = (() => {
 
       <section class="panel" style="${accent(RARITY[feature.rarity], 'margin-top:12px')}">
         <div class="title">RATE-UP DOSSIER</div>
-        <div class="detail-head">
-          <div class="detail-icon">${icon(feature.icon)}</div>
-          <div style="min-width:0">
-            <h2 style="font-size:15px">${esc(feature.name)}</h2>
-            <div class="sub">${RARITY[feature.rarity].label} · ${feature.type}</div>
-            ${stars(RARITY[feature.rarity].stars)}
-            <div class="small dim" style="margin-top:6px">
-              ${State.owned(BANNER.featured)
-                ? 'IN ARMORY · LV' + State.getEntry(BANNER.featured).level
-                : 'NOT YET ACQUIRED'}
+        <div class="sheet-hero">
+          <div class="sheet-portrait">${Portrait.bust(feature)}</div>
+          <div style="min-width:0;flex:1">
+            <h2 style="font-size:15px;margin:0">${esc(feature.name)}</h2>
+            <div class="sub">"${esc(feature.title)}" · ${RARITY[feature.rarity].label}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+              <span class="role-pill">${ROLE[feature.role].name}</span>
+              <span class="role-pill" style="--r:${AFFINITY[feature.affinity].color};--edge:${AFFINITY[feature.affinity].color}">
+                ${AFFINITY[feature.affinity].name}</span>
+            </div>
+            <div class="small dim" style="margin-top:8px">
+              ${State.ownsHero(BANNER.featured) ? 'IN ROSTER' : 'NOT YET RECRUITED'}
             </div>
           </div>
         </div>
-        <p class="trait">${esc(feature.trait)}</p>
+        <p class="trait">${esc(feature.lore)}</p>
       </section>`;
   }
 
-  /* ---------------- screen: ARMORY ---------------- */
+  /* ---------------- screen: ROSTER (champions + gear) ---------------- */
 
-  function screenArmory() {
-    const ids = State.inventoryIds()
-      .filter(id => armoryFilter === 'ALL' || getItemRow(id).type === armoryFilter);
+  function screenRoster() {
+    const tabs = [['champions', 'CHAMPIONS'], ['gear', 'GEAR']]
+      .map(([id, label]) =>
+        `<button class="chip ${rosterTab === id ? 'on' : ''}" data-act="roster-tab" data-t="${id}">${label}</button>`
+      ).join('');
+    return `<div class="chips">${tabs}</div>${rosterTab === 'champions' ? championsSection() : gearSection()}`;
+  }
 
-    const chips = ['ALL', 'OPERATIVE', 'WEAPON', 'GEAR'].map(f =>
-      `<button class="chip ${f === armoryFilter ? 'on' : ''}" data-act="filter" data-f="${f}">${f}</button>`
-    ).join('');
-
+  function championsSection() {
+    const ids = State.roster();
     const body = ids.length
-      ? `<div class="grid">${ids.map(id =>
-          slotHTML(id, { attrs: `data-act="detail" data-id="${id}"` })).join('')}</div>`
-      : '<div class="empty-note">Nothing here yet.<br>Summon on the DRIFT PROTOCOL banner to stock the armory.</div>';
+      ? `<div class="hero-grid">${ids.map(id =>
+          heroCard(id, { attrs: `data-act="hero" data-id="${id}"` })).join('')}</div>`
+      : '<div class="empty-note">No champions yet.<br>Summon on the DRIFT PROTOCOL banner.</div>';
 
     return `
-      <div class="title">ARMORY <span class="muted">${State.inventoryIds().length}/${ITEMS.length} CATALOGUED</span></div>
-      <div class="chips">${chips}</div>
+      <div class="title">CHAMPIONS <span class="muted">${ids.length}/${HEROES.length} RECRUITED</span></div>
       <section class="panel">${body}</section>`;
+  }
+
+  function gearSection() {
+    const all = State.gearList();
+    const filtered = gearFilter === 'ALL' ? all : all.filter(g => g.slot === gearFilter);
+
+    const chips = ['ALL'].concat(SLOT_ORDER).map(f =>
+      `<button class="chip ${f === gearFilter ? 'on' : ''}" data-act="gear-filter" data-f="${f}">
+         ${f === 'ALL' ? 'ALL' : SLOTS[f].name}</button>`
+    ).join('');
+
+    const rows = filtered.slice(0, 60).map(item => gearRow(item,
+      `data-act="gear-detail" data-id="${item.id}"`)).join('');
+
+    return `
+      <div class="chips">${chips}</div>
+      <div class="title">GEAR <span class="muted">${all.length} PIECES</span></div>
+      ${filtered.length ? rows
+        : '<div class="empty-note">No gear yet.<br>Sectors drop it — bosses drop two pieces.</div>'}
+      ${filtered.length > 60 ? '<p class="small dim">Showing the 60 strongest.</p>' : ''}`;
+  }
+
+  function gearRow(item, attrs) {
+    const rarity = GEAR_RARITY[item.rarity];
+    const set = GEAR_SETS[item.set];
+    const worn = item.equipped ? getHero(item.equipped) : null;
+    return `
+      <button class="gear-row ${worn ? 'worn' : ''}"
+              style="--r:${rarity.color};--edge:${rarity.color}55;--tint:${rarity.color}14" ${attrs || ''}>
+        <span class="gicon">${icon(SLOTS[item.slot].icon)}</span>
+        <span class="ginfo">
+          <b>${esc(set.name)} ${esc(SLOTS[item.slot].name)}</b>
+          <span>${esc(Gear.label(item.main.stat, Gear.mainValue(item)))}
+            · ${rarity.label}${worn ? ' · worn by ' + esc(worn.name) : ''}</span>
+        </span>
+        <span class="glevel">+${item.level}</span>
+      </button>`;
   }
 
   /* ---------------- screen: STORE ---------------- */
 
   function screenStore() {
-    const save = State.get();
     const tabs = [['pass', 'DRIFT PASS'], ['shop', 'SHOP'], ['looks', 'APPEARANCE']]
       .map(([id, label]) =>
         `<button class="chip ${storeTab === id ? 'on' : ''}" data-act="store-tab" data-t="${id}">${label}</button>`
@@ -324,15 +363,13 @@ const UI = (() => {
     return `
       <div class="store-notice">${esc(Commerce.PROVIDER.notice)}</div>
       <div class="chips">${tabs}</div>
-      ${storeTab === 'pass' ? passSection()
-        : storeTab === 'shop' ? shopSection()
-        : appearanceSection()}`;
+      ${storeTab === 'pass' ? passSection() : storeTab === 'shop' ? shopSection() : appearanceSection()}`;
   }
 
   function passSection() {
     const save = State.get();
     const premium = save.entitlements.passPremium;
-    const pct = (save.pass.xp / PASS.xpPerLevel) * 100;
+    const progress = (save.pass.xp / PASS.xpPerLevel) * 100;
 
     const rows = [];
     for (let lv = 1; lv <= PASS.levels; lv++) {
@@ -362,20 +399,17 @@ const UI = (() => {
           <span class="small dim">LEVEL</span><b>${save.pass.level}</b>
           <span class="small dim">${save.pass.xp} / ${PASS.xpPerLevel} XP</span>
         </div>
-        <div class="pass-xp"><i style="width:${pct}%"></i></div>
+        <div class="pass-xp"><i style="width:${progress}%"></i></div>
         <div class="fairplay">
           <b>HOW THIS WORKS</b>
           Pass levels come from playing — every battle pays XP. The free track
           pays out at every single level and contains all of the chronite,
           scrap and shards. The premium track adds cosmetics on top. Nothing
-          on either track makes your squad stronger than the other.
+          on either track makes your champions stronger than the other.
         </div>
         ${premium ? '' : `
           <div class="product">
-            <div class="info">
-              <b>${esc(STORE.pass.name)}</b>
-              <span>${esc(STORE.pass.blurb)}</span>
-            </div>
+            <div class="info"><b>${esc(STORE.pass.name)}</b><span>${esc(STORE.pass.blurb)}</span></div>
             <button class="buy" data-act="buy" data-id="pass_premium">${money(STORE.pass.price)}</button>
           </div>`}
         ${rows.join('')}
@@ -402,10 +436,10 @@ const UI = (() => {
     return `
       <div class="fairplay">
         <b>FAIR PLAY</b>
-        Every item, every unit and every sector in this game is reachable
+        Every champion, every piece of gear and every sector is reachable
         without spending. Nothing here sells power, stats, or an exclusive
-        unit. Chronite is earned by playing; buying it only skips waiting.
-        There are no ads and no energy you can pay to refill.
+        champion. Chronite is earned by playing; buying it only skips
+        waiting. There are no ads and no energy you can pay to refill.
       </div>
       <div class="title">COSMETICS</div>
       ${entries.filter(e => ['theme', 'sigils', 'titles', 'supporter'].indexOf(e.kind) !== -1).map(product).join('')}
@@ -450,9 +484,7 @@ const UI = (() => {
       <section class="panel">
         <div class="title">PALETTE</div>
         <div class="swatches">${Object.keys(THEMES).map(themeSwatch).join('')}</div>
-        <p class="small dim" style="margin:10px 0 0">
-          ${esc(THEMES[save.cosmetics.theme].name)} equipped.
-        </p>
+        <p class="small dim" style="margin:10px 0 0">${esc(THEMES[save.cosmetics.theme].name)} equipped.</p>
       </section>
       <section class="panel">
         <div class="title">SQUAD SIGIL</div>
@@ -475,8 +507,7 @@ const UI = (() => {
       <div class="toggle">
         <span>${label}</span>
         <button class="${save.settings[key] ? 'on' : ''}" data-act="toggle" data-key="${key}">
-          ${save.settings[key] ? 'ON' : 'OFF'}
-        </button>
+          ${save.settings[key] ? 'ON' : 'OFF'}</button>
       </div>`;
 
     return `
@@ -485,8 +516,9 @@ const UI = (() => {
         <div class="statline"><span class="dim">CALLSIGN</span><b>${esc(Cosmetics.title().name)}</b></div>
         ${line('CAMPAIGN STARS', `${State.totalStars()} / ${ALL_NODES.length * 3}`)}
         ${line('SECTORS CLEARED', `${ALL_NODES.filter(n => State.isCleared(n.id)).length} / ${ALL_NODES.length}`)}
+        ${line('CHAMPIONS', `${State.roster().length} / ${HEROES.length}`)}
+        ${line('GEAR HELD', fmt(State.gearList().length))}
         ${line('BOSSES FELLED', fmt(st.bossesFelled))}
-        ${line('PERFECT CLEARS', fmt(st.perfectClears))}
         ${line('PASS LEVEL', save.pass.level + ' / ' + PASS.levels)}
       </section>
 
@@ -494,9 +526,9 @@ const UI = (() => {
         <div class="title">SERVICE RECORD</div>
         ${line('SUMMONS PERFORMED', fmt(st.pulls))}
         ${line('ASCENDANTS PULLED', fmt(st.legendaries))}
-        ${line('ITEMS CATALOGUED', `${State.inventoryIds().length} / ${ITEMS.length}`)}
         ${line('SECTORS RUN', fmt(st.missionsRun))}
         ${line('CLEAR RATE', winRate + '%')}
+        ${line('PERFECT CLEARS', fmt(st.perfectClears))}
         ${line('PITY COUNTER', `${save.pity.sinceLegendary} / ${BANNER.pity.hard}`)}
       </section>
 
@@ -522,7 +554,7 @@ const UI = (() => {
         ${line('SAVE BACKEND', SaveStore.backend())}
         ${line('ENGINE', engineName())}
         ${line('VIEWPORT', window.innerWidth + ' × ' + window.innerHeight)}
-        ${line('LAYOUT SUPPORT', supports('aspect-ratio', '1') ? 'full' : 'fallback')}
+        ${line('3D SUPPORT', supports('transform-style', 'preserve-3d') ? 'full' : 'flat fallback')}
         <p class="small dim" style="line-height:1.7;margin:10px 0 0">
           Read this out if the game misbehaves on your device — it says which
           browser engine and storage the build is actually running on.
@@ -531,7 +563,7 @@ const UI = (() => {
 
       <section class="panel">
         <div class="title">BUILD</div>
-        <div class="statline"><span class="dim">VERSION</span><b>0.2.0 prototype</b></div>
+        <div class="statline"><span class="dim">VERSION</span><b>0.3.0 prototype</b></div>
         <div class="statline"><span class="dim">SAVE</span><b>${SaveStore.secured ? 'signed on device' : 'browser (dev)'}</b></div>
         <p class="small dim" style="line-height:1.7;margin:12px 0 14px">
           Progress is stored on this device only — there is no account and
@@ -546,7 +578,7 @@ const UI = (() => {
   const SCREENS = {
     campaign: screenCampaign,
     summon: screenSummon,
-    armory: screenArmory,
+    roster: screenRoster,
     store: screenStore,
     system: screenSystem
   };
@@ -568,8 +600,8 @@ const UI = (() => {
 
   /* ---------------- overlays ---------------- */
 
-  function openSheet(html) {
-    overlayEl.innerHTML = `<div class="sheet">${html}</div>`;
+  function openSheet(html, cls) {
+    overlayEl.innerHTML = `<div class="sheet ${cls || ''}">${html}</div>`;
     overlayEl.classList.remove('hidden');
   }
 
@@ -580,68 +612,210 @@ const UI = (() => {
 
   const isOverlayOpen = () => !overlayEl.classList.contains('hidden');
 
-  /* -------- item detail -------- */
+  /* -------- champion sheet -------- */
 
-  function showDetail(itemId) {
-    const row = getItemRow(itemId);
-    const entry = State.getEntry(itemId);
-    const rarity = RARITY[row.rarity];
-    const cost = State.upgradeCost(itemId);
-    const maxed = entry.level >= ECONOMY.levelCap;
-    const can = State.canUpgrade(itemId);
+  function showHero(heroId) {
+    pendingHero = heroId;
+    const hero = getHero(heroId);
+    const owned = State.heroEntry(heroId);
+    if (!owned) return;
+
+    const rarity = RARITY[hero.rarity];
+    const affinity = AFFINITY[hero.affinity];
+    const stats = State.statsFor(heroId);
+    const sets = activeSets(owned, State.gearOf);
+
+    const levelCost = State.levelCost(heroId);
+    const ascendCost = State.ascendCost(heroId);
+    const canLevel = State.canLevel(heroId);
+    const canAscend = State.canAscend(heroId);
+    const maxLevel = owned.level >= HERO_MAX_LEVEL;
+    const maxStars = owned.stars >= HERO_MAX_STARS;
+
+    const slotsHTML = SLOT_ORDER.map(slot => {
+      const item = State.gearOf(owned.equipped[slot]);
+      const rar = item ? GEAR_RARITY[item.rarity] : null;
+      return `
+        <button class="gear-slot ${item ? 'filled' : ''}"
+                style="${item ? `--r:${rar.color};--edge:${rar.color}66;--tint:${rar.color}18` : ''}"
+                data-act="gear-pick" data-slot="${slot}">
+          ${icon(SLOTS[slot].icon)}
+          <span class="slotname">${SLOTS[slot].name}</span>
+          ${item ? `<span class="plus">+${item.level}</span>
+                    <span class="setname">${esc(GEAR_SETS[item.set].name)}</span>` : ''}
+        </button>`;
+    }).join('');
+
+    const skillsHTML = hero.skills.map((skill, i) => `
+      <div class="skill-row" style="${accent(rarity)}">
+        <span class="badge">A${i + 1}</span>
+        <span class="body">
+          <b>${esc(skill.name)}</b>
+          <span>${esc(describeSkill(skill))}</span>
+        </span>
+      </div>`).join('');
 
     openSheet(`
       <div style="${accent(rarity)}">
-        <div class="detail-head">
-          <div class="detail-icon">${icon(row.icon)}</div>
-          <div style="min-width:0">
-            <h2>${esc(row.name)}</h2>
-            <div class="sub">${rarity.label} · ${row.type}</div>
-            ${stars(rarity.stars)}
+        <div class="sheet-hero">
+          <div class="sheet-portrait">${Portrait.bust(hero)}</div>
+          <div style="min-width:0;flex:1">
+            <h2>${esc(hero.name)}</h2>
+            <div class="sub">"${esc(hero.title)}"</div>
+            <div class="hstars" style="display:flex;gap:2px;margin:4px 0">${stars(owned.stars, HERO_MAX_STARS)}</div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">
+              <span class="role-pill">${ROLE[hero.role].name}</span>
+              <span class="role-pill" style="--r:${affinity.color};--edge:${affinity.color}">${affinity.name}</span>
+              <span class="role-pill" style="--r:${FACTION[hero.faction].color};--edge:${FACTION[hero.faction].color}">
+                ${esc(FACTION[hero.faction].name.split(' ')[0])}</span>
+            </div>
+            <div class="small dim" style="margin-top:6px">LEVEL ${owned.level} / ${HERO_MAX_LEVEL}
+              · POWER ${fmt(stats.power)}</div>
           </div>
         </div>
-        <p class="trait">${esc(row.trait)}</p>
-        <div class="statline"><span class="dim">POWER</span><b>${fmt(State.getPower(itemId))}</b></div>
-        <div class="statline"><span class="dim">LEVEL</span><b>${entry.level} / ${ECONOMY.levelCap}</b></div>
-        <div class="statline"><span class="dim">ABILITY</span><b>${esc(row.ability.name)}</b></div>
-        <div class="statline"><span class="dim">COOLDOWN</span><b>${row.ability.cd} rounds</b></div>
-        <div class="statline"><span class="dim">ALLEGIANCE</span><b>${esc(FACTION[row.faction].name)}</b></div>
-        <div class="statline"><span class="dim">COPIES HELD</span><b>${entry.copies}</b></div>
-        <p class="trait">${esc(row.ability.note)}.</p>
-        ${maxed
-          ? '<button class="btn ghost" disabled>MAX LEVEL</button>'
-          : `<button class="btn ${can ? '' : 'ghost'}" data-act="upgrade" data-id="${itemId}" ${can ? '' : 'disabled'}>
-               UPGRADE &nbsp;${icon('ic-scrap')}${fmt(cost.scrap)} &nbsp;${icon('ic-shard')}${cost.shards}
-             </button>`}
-        <div style="height:10px"></div>
+
+        <div class="statgrid">
+          <div><span>HP</span><b>${fmt(stats.hp)}</b></div>
+          <div><span>ATK</span><b>${fmt(stats.atk)}</b></div>
+          <div><span>DEF</span><b>${fmt(stats.def)}</b></div>
+          <div><span>SPD</span><b>${fmt(stats.spd)}</b></div>
+          <div><span>C.RATE</span><b>${pct(stats.crate)}</b></div>
+          <div><span>C.DMG</span><b>${pct(stats.cdmg)}</b></div>
+          <div><span>ACC</span><b>${fmt(stats.acc)}</b></div>
+          <div><span>RES</span><b>${fmt(stats.res)}</b></div>
+        </div>
+
+        <div class="title" style="margin-top:14px">GEAR</div>
+        <div class="gear-slots">${slotsHTML}</div>
+        ${sets.length ? `<p class="small" style="margin-top:8px">${sets.map(s =>
+          `<span class="role-pill" style="--r:${s.set.color};--edge:${s.set.color}">${s.set.name}${s.stacks > 1 ? ' ×' + s.stacks : ''}</span>`
+        ).join(' ')}</p>` : '<p class="small dim" style="margin-top:8px">No set bonus active.</p>'}
+
+        <div class="title" style="margin-top:14px">SKILLS</div>
+        ${skillsHTML}
+
+        <p class="trait">${esc(hero.lore)}</p>
+
+        ${maxLevel ? '<button class="btn ghost" disabled>MAX LEVEL</button>'
+          : `<button class="btn ${canLevel ? '' : 'ghost'}" data-act="level-hero" data-id="${heroId}"
+               ${canLevel ? '' : 'disabled'}>LEVEL UP &nbsp;${icon('ic-scrap')}${fmt(levelCost.scrap)}</button>`}
+        <div style="height:8px"></div>
+        ${maxStars ? '<button class="btn ghost" disabled>FULLY ASCENDED</button>'
+          : `<button class="btn ${canAscend ? 'gold' : 'ghost'}" data-act="ascend-hero" data-id="${heroId}"
+               ${canAscend ? '' : 'disabled'}>ASCEND &nbsp;${icon('ic-shard')}${fmt(ascendCost.shards)}</button>`}
+        <div style="height:8px"></div>
         <button class="btn ghost" data-act="close">CLOSE</button>
       </div>`);
   }
 
-  /* -------- squad picker -------- */
+  /** Plain-language description of what a skill does. */
+  function describeSkill(skill) {
+    const bits = [];
+    if (skill.type === 'damage') {
+      bits.push(`${skill.mult.toFixed(1)}× ATK`
+        + (skill.hits > 1 ? ` ×${skill.hits} hits` : '')
+        + (skill.target === 'all_enemies' ? ' to all enemies' : ''));
+      if (skill.ignoreDef) bits.push(`ignores ${pct(skill.ignoreDef)} DEF`);
+      if (skill.lifesteal) bits.push(`heals for ${pct(skill.lifesteal)} of damage`);
+      if (skill.executeUnder) bits.push(`+70% below ${pct(skill.executeUnder)} HP`);
+      if (skill.breakShield) bits.push('destroys shields');
+      if (skill.scaleDef) bits.push('scales on DEF');
+      if (skill.scaleHp) bits.push('scales on HP');
+    } else {
+      if (skill.heal) bits.push(`heals ${pct(skill.heal)} max HP`);
+      if (skill.shield) bits.push(`shields ${pct(skill.shield)} max HP`);
+      if (skill.cleanse) bits.push('removes debuffs');
+    }
+    (skill.applies || []).forEach(a => {
+      bits.push(`${STATUS[a.id].name} ${a.chance < 1 ? pct(a.chance) + ' ' : ''}for ${a.turns} turns`);
+    });
+    if (skill.extraTurn) bits.push(`${pct(skill.extraTurn)} chance of an extra turn`);
+    return bits.join(' · ') + (skill.cd ? ` — ${skill.cd} turn cooldown` : ' — no cooldown');
+  }
 
-  function showSquadPicker(slotIndex) {
-    pendingSquadSlot = slotIndex;
-    const ids = State.inventoryIds();
+  /* -------- gear picker and detail -------- */
+
+  function showGearPicker(slot) {
+    pendingGearSlot = slot;
+    const options = State.gearList(g => g.slot === slot);
+    const equippedId = State.heroEntry(pendingHero).equipped[slot];
+
     openSheet(`
-      <h2>ASSIGN SLOT ${slotIndex + 1}</h2>
-      <div class="sub">SELECT A UNIT</div>
+      <h2>${SLOTS[slot].name}</h2>
+      <div class="sub">SELECT A PIECE</div>
+      ${equippedId ? `<button class="btn ghost" data-act="unequip" data-slot="${slot}">REMOVE CURRENT</button>
+                      <div style="height:10px"></div>` : ''}
+      ${options.length
+        ? options.slice(0, 40).map(item => gearRow(item, `data-act="equip-gear" data-id="${item.id}"`)).join('')
+        : '<div class="empty-note">Nothing for this slot yet.</div>'}
+      <div style="height:8px"></div>
+      <button class="btn ghost" data-act="back-hero">BACK</button>`);
+  }
+
+  function showGearDetail(gearId) {
+    const item = State.gearOf(gearId);
+    if (!item) return;
+    const rarity = GEAR_RARITY[item.rarity];
+    const set = GEAR_SETS[item.set];
+    const cost = Gear.upgradeCost(item);
+    const canUp = State.canUpgradeGear(gearId);
+    const maxed = item.level >= GEAR_MAX_LEVEL;
+    const worn = item.equipped ? getHero(item.equipped) : null;
+
+    openSheet(`
+      <div style="--r:${rarity.color};--edge:${rarity.color}66;--tint:${rarity.color}18">
+        <h2>${esc(set.name)} ${esc(SLOTS[item.slot].name)}</h2>
+        <div class="sub">${rarity.label} · +${item.level} · TIER ${item.tier}</div>
+        <div class="statline"><span class="dim">MAIN</span>
+          <b>${esc(Gear.label(item.main.stat, Gear.mainValue(item)))}</b></div>
+        ${item.subs.map(s => `<div class="substat"><span>${STATS[s.stat].name}</span>
+          <b>${esc(Gear.label(s.stat, s.value).split('+')[1])}</b></div>`).join('')}
+        <p class="trait">${esc(set.name)} set — ${set.pieces} pieces:
+          ${esc(setBonusText(set))}${set.note ? '. ' + esc(set.note) : ''}</p>
+        ${worn ? `<div class="statline"><span class="dim">WORN BY</span><b>${esc(worn.name)}</b></div>` : ''}
+        <div style="height:12px"></div>
+        ${maxed ? '<button class="btn ghost" disabled>FULLY UPGRADED</button>'
+          : `<button class="btn ${canUp ? '' : 'ghost'}" data-act="upgrade-gear" data-id="${gearId}"
+               ${canUp ? '' : 'disabled'}>UPGRADE &nbsp;${icon('ic-scrap')}${fmt(cost.scrap)}
+               ${cost.shards ? icon('ic-shard') + cost.shards : ''}</button>`}
+        <div style="height:8px"></div>
+        <button class="btn danger" data-act="sell-gear" data-id="${gearId}">SCRAP THIS PIECE</button>
+        <div style="height:8px"></div>
+        <button class="btn ghost" data-act="close">CLOSE</button>
+      </div>`);
+  }
+
+  function setBonusText(set) {
+    return Object.keys(set.bonus).map(key => {
+      const value = set.bonus[key];
+      const names = { hp_pct: 'HP', atk_pct: 'ATK', def_pct: 'DEF', spd_pct: 'SPD',
+                      crate: 'C.RATE', cdmg: 'C.DMG', lifesteal: 'lifesteal' };
+      return `+${Math.round(value * 100)}% ${names[key] || key}`;
+    }).join(', ');
+  }
+
+  /* -------- team picker -------- */
+
+  function showTeamPicker(slotIndex) {
+    pendingTeamSlot = slotIndex;
+    const ids = State.roster();
+    openSheet(`
+      <h2>SLOT ${slotIndex + 1}</h2>
+      <div class="sub">SELECT A CHAMPION</div>
       ${ids.length
-        ? `<div class="grid">${ids.map(id => {
-              const row = getItemRow(id);
-              return `<div>${slotHTML(id, { attrs: `data-act="assign" data-id="${id}"` })}
-                      <div class="squad-name">${fmt(State.getPower(id))}</div>
-                      <div class="squad-name" style="color:${FACTION[row.faction].color}">${esc(row.type)}</div>
-                      </div>`;
-            }).join('')}</div>`
-        : '<div class="empty-note">Armory is empty. Summon something first.</div>'}
+        ? `<div class="hero-grid">${ids.map(id => {
+            const stats = State.statsFor(id);
+            return `<div>${heroCard(id, { attrs: `data-act="assign" data-id="${id}"`, hideDeployed: false })}
+                    <div class="squad-name">${fmt(stats.power)}</div></div>`;
+          }).join('')}</div>`
+        : '<div class="empty-note">Roster is empty. Summon first.</div>'}
       <div style="height:12px"></div>
       <button class="btn ghost" data-act="clear-slot">CLEAR SLOT</button>
       <div style="height:8px"></div>
       <button class="btn ghost" data-act="close">CANCEL</button>`);
   }
 
-  /* -------- node briefing -------- */
+  /* -------- briefing and report -------- */
 
   function showBriefing(nodeId) {
     const node = getNode(nodeId);
@@ -649,76 +823,80 @@ const UI = (() => {
     const save = State.get();
     const odds = Math.round(Campaign.forecast(node) * 100);
     const recommended = Campaign.recommendedPower(node);
-    const power = State.squadPower(node.faction);
+    const power = State.teamPower();
     const rewards = nodeRewards(node);
     const got = State.starsOn(node.id);
+    const foes = buildFoes(node);
 
-    const noSquad = !Campaign.squadReady();
+    const noTeam = !Campaign.teamReady();
     const noFuel = save.fuel.amount < node.fuel;
 
-    const line = node.comp.map(id => {
-      const enemy = ENEMIES[id];
-      return `<div class="reward" style="${accent(FACTION[enemy.faction])}">
-                ${icon(enemy.icon)} ${esc(enemy.name)}${enemy.boss ? ' <b>BOSS</b>' : ''}
-              </div>`;
-    }).join('');
+    const line = foes.map(f => `
+      <div class="reward" style="${accent(RARITY[f.hero.rarity])}">
+        <span style="width:18px;height:18px;display:inline-block;color:${AFFINITY[f.hero.affinity].color}">
+          ${icon('ic-star')}</span>
+        ${esc(f.hero.name)}${f.boss ? ' <b>BOSS</b>' : ''}
+        <b>${fmt(f.stats.power)}</b>
+      </div>`).join('');
 
     openSheet(`
       <div style="${accent(faction)}">
         <h2>${esc(node.name)}</h2>
         <div class="sub">${esc(faction.name)} · ${node.boss ? 'BOSS SECTOR' : 'SECTOR'}</div>
         <div class="statline"><span class="dim">RECOMMENDED POWER</span><b>${fmt(recommended)}</b></div>
-        <div class="statline"><span class="dim">YOUR POWER</span>
+        <div class="statline"><span class="dim">YOUR TEAM</span>
           <b style="color:${power >= recommended ? 'var(--good)' : 'var(--bad)'}">${fmt(power)}</b></div>
         <div class="statline"><span class="dim">ESTIMATED ODDS</span><b>${odds}%</b></div>
         <div class="statline"><span class="dim">FUEL</span><b>${node.fuel}</b></div>
         <div class="statline"><span class="dim">BEST RESULT</span><b>${got}★ / 3★</b></div>
-        <p class="trait">Matching allegiance grants +${Math.round(COMBAT.factionBonus * 100)}% power here.
-          ${STAR_GOALS.map(g => g.label).join(' · ')}.</p>
+        <p class="trait">${STAR_GOALS.map(g => g.label).join(' · ')}.</p>
         <div class="title">HOSTILE LINE</div>
         ${line}
         <div class="title">PAYOUT</div>
-        <div class="statline"><span class="dim">SCRAP / CHRONITE</span><b>${fmt(rewards.scrap)} / ${fmt(rewards.chronite)}</b></div>
-        <div class="statline"><span class="dim">PASS XP</span><b>${rewards.xp}</b></div>
-        ${got === 0 ? `<div class="statline"><span class="dim">FIRST CLEAR BONUS</span><b>${fmt(rewards.firstClear)} chronite</b></div>` : ''}
+        <div class="statline"><span class="dim">SCRAP / CHRONITE</span>
+          <b>${fmt(rewards.scrap)} / ${fmt(rewards.chronite)}</b></div>
+        <div class="statline"><span class="dim">GEAR</span>
+          <b>${node.boss ? '2 pieces' : 'chance of 1'}</b></div>
+        ${got === 0 ? `<div class="statline"><span class="dim">FIRST CLEAR</span>
+          <b>${fmt(rewards.firstClear)} chronite</b></div>` : ''}
         <div style="height:14px"></div>
-        <button class="btn" data-act="run" data-id="${node.id}" ${noSquad || noFuel ? 'disabled' : ''}>
-          ${noSquad ? 'ASSIGN A SQUAD FIRST' : noFuel ? 'NOT ENOUGH FUEL' : 'DEPLOY'}
+        <button class="btn" data-act="run" data-id="${node.id}" ${noTeam || noFuel ? 'disabled' : ''}>
+          ${noTeam ? 'BUILD A TEAM FIRST' : noFuel ? 'NOT ENOUGH FUEL' : 'DEPLOY'}
         </button>
         <div style="height:8px"></div>
         <button class="btn ghost" data-act="close">ABORT</button>
       </div>`);
   }
 
-  /* -------- after-action report -------- */
-
   function showReport(outcome) {
     const { battle, payout, node } = outcome;
     const faction = FACTION[node.faction];
-    const dropRow = payout.drop ? getItemRow(payout.drop.itemId) : null;
 
     openSheet(`
       <div style="${accent(faction)}">
-        <div class="verdict ${battle.won ? 'win' : 'loss'}">${battle.won ? 'SECTOR CLEAR' : 'FALL BACK'}</div>
+        <div class="verdict ${battle.won ? 'win' : 'loss'}">${battle.won ? 'VICTORY' : 'DEFEAT'}</div>
         <p class="small dim" style="text-align:center;margin:0 0 10px">
-          ${esc(node.name)} · ${battle.rounds} rounds · ${battle.losses} lost
+          ${esc(node.name)} · ${battle.turns} turns · ${battle.losses} lost
         </p>
-        ${battle.won ? `<div style="text-align:center;margin-bottom:12px;--r:var(--gold)">${stars(battle.stars, 3)}</div>` : ''}
+        ${battle.won ? `<div style="text-align:center;margin-bottom:12px;--r:var(--gold)">
+          ${stars(battle.stars, 3)}</div>` : ''}
         <div class="reward" style="--r:#9fb4cc">${icon('ic-scrap')} SCRAP <b>+${fmt(payout.scrap)}</b></div>
         <div class="reward" style="--r:var(--cyan)">${icon('ic-chronite')} CHRONITE <b>+${fmt(payout.chronite)}</b></div>
-        ${payout.firstClear ? `<div class="reward" style="--r:var(--gold)">${icon('ic-star')} FIRST CLEAR <b>+${fmt(payout.firstClear)}</b></div>` : ''}
+        ${payout.firstClear ? `<div class="reward" style="--r:var(--gold)">
+          ${icon('ic-star')} FIRST CLEAR <b>+${fmt(payout.firstClear)}</b></div>` : ''}
         <div class="reward" style="--r:var(--magenta)">${icon('ic-summon')} PASS XP <b>+${payout.xp}</b></div>
-        ${dropRow ? `
-          <div class="reward" style="${accent(RARITY[dropRow.rarity])}">
-            ${icon(dropRow.icon)} ${esc(dropRow.name)}
-            <b>${payout.drop.isNew ? 'NEW' : '+' + payout.drop.shards + ' shards'}</b>
-          </div>` : ''}
+        ${payout.drops.map(item => {
+          const rar = GEAR_RARITY[item.rarity];
+          return `<div class="reward" style="--r:${rar.color}">
+            ${icon(SLOTS[item.slot].icon)} ${esc(GEAR_SETS[item.set].name)} ${esc(SLOTS[item.slot].name)}
+            <b>${rar.label}</b></div>`;
+        }).join('')}
         <div style="height:14px"></div>
         <button class="btn" data-act="close">CONFIRM</button>
       </div>`);
   }
 
-  /* -------- pull reveal -------- */
+  /* -------- summon reveal -------- */
 
   let reveal = null;
 
@@ -730,7 +908,7 @@ const UI = (() => {
 
   function drawReveal() {
     const r = reveal.results[reveal.index];
-    const row = getItemRow(r.itemId);
+    const hero = getHero(r.heroId);
     const rarity = RARITY[r.rarity];
     const many = reveal.results.length > 1;
 
@@ -741,11 +919,12 @@ const UI = (() => {
         ${many ? '<button class="skip" data-act="skip-reveal">SKIP ALL</button>' : ''}
         <div class="card">
           <div class="rr">${rarity.label}</div>
-          ${icon(row.icon, 'glyph')}
-          <div class="nm">${esc(row.name)}</div>
+          <div class="card-art">${Portrait.figure(hero)}</div>
+          <div class="nm">${esc(hero.name)}</div>
+          <div class="dupe">${esc(ROLE[hero.role].name)} · ${esc(AFFINITY[hero.affinity].name)}</div>
           ${stars(rarity.stars)}
           ${r.isNew
-            ? '<div class="newtag2">NEW ACQUISITION</div>'
+            ? '<div class="newtag2">NEW CHAMPION</div>'
             : `<div class="dupe">duplicate · +${r.shards} shards · +${fmt(r.scrap)} scrap</div>`}
         </div>
         <div class="hint">TAP TO CONTINUE</div>
@@ -766,9 +945,9 @@ const UI = (() => {
     overlayEl.innerHTML = `
       <div class="sheet">
         <h2>SUMMON COMPLETE</h2>
-        <div class="sub">${results.length} UNITS · ${newCount} NEW</div>
-        <div class="grid">${results.map(r =>
-          slotHTML(r.itemId, { attrs: `data-act="detail" data-id="${r.itemId}"` })).join('')}</div>
+        <div class="sub">${results.length} CHAMPIONS · ${newCount} NEW</div>
+        <div class="hero-grid">${results.map(r =>
+          heroCard(r.heroId, { attrs: `data-act="hero" data-id="${r.heroId}"`, hideDeployed: true })).join('')}</div>
         <div style="height:14px"></div>
         <button class="btn" data-act="close">CONFIRM</button>
       </div>`;
@@ -802,8 +981,9 @@ const UI = (() => {
 
     switch (act) {
       case 'tab': go(el.dataset.tab); break;
+      case 'roster-tab': rosterTab = el.dataset.t; render(); break;
+      case 'gear-filter': gearFilter = el.dataset.f; render(); break;
       case 'store-tab': storeTab = el.dataset.t; render(); break;
-      case 'filter': armoryFilter = el.dataset.f; render(); break;
 
       case 'pull': doPull(parseInt(el.dataset.n, 10)); break;
       case 'advance': advanceReveal(); break;
@@ -814,35 +994,75 @@ const UI = (() => {
         break;
       }
 
-      case 'detail': showDetail(el.dataset.id); break;
-      case 'upgrade': {
+      case 'hero': showHero(el.dataset.id); break;
+      case 'back-hero': showHero(pendingHero); break;
+
+      case 'level-hero': {
         const id = el.dataset.id;
-        if (State.upgrade(id)) {
+        if (State.levelHero(id)) {
           Sfx.play('levelup');
           State.advanceQuest('q_upgrade', 1);
-          showDetail(id);
+          showHero(id);
           renderHUD();
-        } else {
-          toast('Not enough materials.');
-          Sfx.play('error');
-        }
+        } else { toast('Not enough scrap.'); Sfx.play('error'); }
+        break;
+      }
+      case 'ascend-hero': {
+        const id = el.dataset.id;
+        if (State.ascendHero(id)) {
+          Sfx.play('levelup');
+          toast(getHero(id).name + ' ascended.');
+          showHero(id);
+          renderHUD();
+        } else { toast('Not enough shards.'); Sfx.play('error'); }
         break;
       }
 
-      case 'pick-squad': showSquadPicker(parseInt(el.dataset.slot, 10)); break;
+      case 'gear-pick': showGearPicker(el.dataset.slot); break;
+      case 'equip-gear':
+        State.equipGear(pendingHero, el.dataset.id);
+        Sfx.play('confirm');
+        showHero(pendingHero);
+        break;
+      case 'unequip':
+        State.unequipGear(pendingHero, el.dataset.slot);
+        showHero(pendingHero);
+        break;
+      case 'gear-detail': showGearDetail(el.dataset.id); break;
+      case 'upgrade-gear': {
+        const result = State.upgradeGear(el.dataset.id);
+        if (result) {
+          Sfx.play('levelup');
+          State.advanceQuest('q_upgrade', 1);
+          if (result.improved) toast(STATS[result.improved.stat].name + ' improved.');
+          showGearDetail(el.dataset.id);
+          renderHUD();
+        } else { toast('Not enough materials.'); Sfx.play('error'); }
+        break;
+      }
+      case 'sell-gear': {
+        const value = State.sellGear(el.dataset.id);
+        Sfx.play('confirm');
+        toast('Scrapped for ' + fmt(value) + ' scrap.');
+        closeOverlay();
+        render();
+        break;
+      }
+
+      case 'pick-team': showTeamPicker(parseInt(el.dataset.slot, 10)); break;
       case 'assign':
-        State.setSquadSlot(pendingSquadSlot, el.dataset.id);
+        State.setTeamSlot(pendingTeamSlot, el.dataset.id);
         closeOverlay();
         render();
         break;
       case 'clear-slot':
-        State.setSquadSlot(pendingSquadSlot, null);
+        State.setTeamSlot(pendingTeamSlot, null);
         closeOverlay();
         render();
         break;
-      case 'auto-squad':
-        State.autoSquad();
-        toast('Best available units deployed.');
+      case 'auto-team':
+        State.autoTeam();
+        toast('Strongest champions deployed.');
         render();
         break;
 
@@ -859,11 +1079,9 @@ const UI = (() => {
         }
         break;
       }
-      case 'claim-quest': {
-        const reward = State.claimQuest(el.dataset.id);
-        if (reward) { Sfx.play('confirm'); toast('Contract paid.'); render(); }
+      case 'claim-quest':
+        if (State.claimQuest(el.dataset.id)) { Sfx.play('confirm'); toast('Contract paid.'); render(); }
         break;
-      }
       case 'claim-pass': {
         const reward = State.claimPass(parseInt(el.dataset.lv, 10), el.dataset.prem === '1');
         if (reward) { Sfx.play('levelup'); toast(reward.label + ' claimed.'); render(); }
@@ -872,8 +1090,7 @@ const UI = (() => {
 
       case 'buy': {
         const entry = Store.catalogue().find(e => e.id === el.dataset.id);
-        if (!entry) break;
-        confirmPurchase(entry);
+        if (entry) confirmPurchase(entry);
         break;
       }
       case 'buy-confirm': {
@@ -893,9 +1110,7 @@ const UI = (() => {
         const table = slot === 'theme' ? THEMES : slot === 'sigil' ? SIGILS : TITLES;
         const bucket = slot === 'theme' ? 'themes' : slot === 'sigil' ? 'sigils' : 'titles';
         if (!table[ref].free && !State.owns(bucket, ref)) {
-          toast('Not unlocked yet.');
-          Sfx.play('error');
-          break;
+          toast('Not unlocked yet.'); Sfx.play('error'); break;
         }
         State.setCosmetic(slot, ref);
         Cosmetics.apply();
@@ -912,9 +1127,8 @@ const UI = (() => {
         break;
       }
       case 'cycle-speed': {
-        const next = (State.get().settings.battleSpeed || 1) >= 3
-          ? 1 : (State.get().settings.battleSpeed || 1) + 1;
-        State.setSetting('battleSpeed', next);
+        const now = State.get().settings.battleSpeed || 1;
+        State.setSetting('battleSpeed', now >= 4 ? 1 : now + 1);
         render();
         break;
       }
@@ -923,7 +1137,8 @@ const UI = (() => {
         openSheet(`
           <h2>WIPE SAVE DATA</h2>
           <div class="sub">THIS CANNOT BE UNDONE</div>
-          <p class="trait">Every summon, item, clear and unlock on this device will be erased.</p>
+          <p class="trait">Every champion, every piece of gear and all campaign
+            progress on this device will be erased.</p>
           <button class="btn danger" data-act="reset-confirm">ERASE EVERYTHING</button>
           <div style="height:8px"></div>
           <button class="btn ghost" data-act="close">KEEP MY DATA</button>`);
@@ -959,9 +1174,7 @@ const UI = (() => {
       ev.preventDefault();
       ev.stopPropagation();
       Sfx.unlock();
-      if (['tab', 'node', 'pull', 'run', 'buy', 'detail'].indexOf(el.dataset.act) !== -1) {
-        Sfx.play('tap');
-      }
+      if (['tab', 'node', 'pull', 'run', 'buy', 'hero'].indexOf(el.dataset.act) !== -1) Sfx.play('tap');
       handleAction(el.dataset.act, el);
     });
 
