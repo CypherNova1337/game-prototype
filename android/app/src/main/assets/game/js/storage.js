@@ -1,67 +1,103 @@
 /* ------------------------------------------------------------------
  * storage.js — the save layer.
  *
- * Deliberately shaped like a Nakama storage engine: reads and writes go
- * through collection / key / value records and return promises, so the
- * body of the game never touches localStorage directly. Swapping this
- * file for real Nakama calls should not require touching state.js.
+ * Writes go to the native SaveVault when the app provides it: the save
+ * then lives in app-private storage signed with a non-extractable device
+ * key, so an edited save is rejected on load instead of trusted. In a
+ * plain browser (the dev harness) it falls back to localStorage, which is
+ * fine for testing and trusted no further than any other client data.
+ *
+ * The read/write surface is shaped like a remote storage engine on
+ * purpose — collection, key, value, version — so moving the save to a
+ * server later means rewriting this file and nothing else.
  * ------------------------------------------------------------------ */
 
 const Storage = (() => {
-  const PREFIX = 'nova::';
+  const FALLBACK_KEY = 'nova::store';
 
-  function recordKey(collection, key) {
-    return PREFIX + collection + '::' + key;
+  const vault = (() => {
+    try {
+      const v = window.NovaSave;
+      return v && typeof v.read === 'function' && typeof v.write === 'function' ? v : null;
+    } catch (err) {
+      return null;
+    }
+  })();
+
+  let cache = null;   // { "collection::key": record }
+
+  function loadAll() {
+    if (cache) return cache;
+    let raw = '';
+    try {
+      raw = vault ? vault.read() : (window.localStorage.getItem(FALLBACK_KEY) || '');
+    } catch (err) {
+      console.warn('[storage] read blocked:', err && err.message);
+    }
+    try {
+      cache = raw ? JSON.parse(raw) : {};
+    } catch (err) {
+      console.warn('[storage] unreadable store, starting clean');
+      cache = {};
+    }
+    if (typeof cache !== 'object' || cache === null || Array.isArray(cache)) cache = {};
+    return cache;
   }
+
+  function persist() {
+    const blob = JSON.stringify(cache);
+    try {
+      if (vault) return vault.write(blob);
+      window.localStorage.setItem(FALLBACK_KEY, blob);
+      return true;
+    } catch (err) {
+      console.warn('[storage] write failed:', err && err.message);
+      return false;
+    }
+  }
+
+  const id = (collection, key) => collection + '::' + key;
 
   /** Read one storage object. Resolves to null when nothing is written yet. */
   function read(collection, key) {
-    return new Promise(resolve => {
-      let raw = null;
-      try {
-        raw = window.localStorage.getItem(recordKey(collection, key));
-      } catch (err) {
-        console.warn('[storage] read blocked', err);
-      }
-      if (!raw) return resolve(null);
-      try {
-        resolve(JSON.parse(raw));
-      } catch (err) {
-        console.warn('[storage] corrupt record, discarding', collection, key, err);
-        resolve(null);
-      }
-    });
+    return Promise.resolve(loadAll()[id(collection, key)] || null);
   }
 
   /** Write one storage object. `value` is any JSON-serialisable payload. */
   function write(collection, key, value) {
-    return new Promise(resolve => {
-      const record = {
-        collection,
-        key,
-        value,                       // Nakama keeps this as a string; we keep the object
-        version: Date.now()
-      };
-      try {
-        window.localStorage.setItem(recordKey(collection, key), JSON.stringify(record));
-        resolve(record);
-      } catch (err) {
-        console.warn('[storage] write failed', err);
-        resolve(null);
-      }
-    });
+    const record = { collection, key, value, version: Date.now() };
+    loadAll()[id(collection, key)] = record;
+    persist();
+    return Promise.resolve(record);
   }
 
   function remove(collection, key) {
-    return new Promise(resolve => {
-      try {
-        window.localStorage.removeItem(recordKey(collection, key));
-      } catch (err) {
-        console.warn('[storage] delete failed', err);
-      }
-      resolve();
-    });
+    delete loadAll()[id(collection, key)];
+    persist();
+    return Promise.resolve();
   }
 
-  return { read, write, remove };
+  /** Wipe everything, including the native file when there is one. */
+  function clearAll() {
+    cache = {};
+    try {
+      if (vault && typeof vault.wipe === 'function') vault.wipe();
+      else window.localStorage.removeItem(FALLBACK_KEY);
+    } catch (err) {
+      console.warn('[storage] wipe failed:', err && err.message);
+    }
+    return Promise.resolve();
+  }
+
+  /** Human-readable backing store, shown in the diagnostics panel. */
+  function backend() {
+    if (!vault) return 'browser storage (dev)';
+    try {
+      return typeof vault.backend === 'function' ? vault.backend() : 'device keystore';
+    } catch (err) {
+      return 'device keystore';
+    }
+  }
+
+  return { read, write, remove, clearAll, backend, secured: !!vault };
 })();

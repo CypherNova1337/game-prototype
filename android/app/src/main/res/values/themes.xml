@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Fits the system insets on purpose: drawing under the navigation bar
+         put the gesture strip on top of the game's bottom tab row. -->
     <style name="Theme.NovaDrift" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/space</item>
         <item name="android:statusBarColor">@color/space</item>
         <item name="android:navigationBarColor">@color/space</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
 </resources>

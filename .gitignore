@@ -8,3 +8,9 @@ android/local.properties
 
 # Node (only used by the headless UI harness)
 node_modules/
+
+# Signing material — never commit these
+*.jks
+*.keystore
+signing.properties
+android/keystore.properties

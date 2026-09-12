@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Nova Drift</title>
 <link rel="stylesheet" href="css/style.css">
@@ -38,6 +40,21 @@
   <symbol id="ic-armory" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></g></symbol>
   <symbol id="ic-system" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="17" r="2"/></g></symbol>
 </svg>
+
+<noscript>
+  <div id="fatal">
+    <h1>JAVASCRIPT IS DISABLED</h1>
+    <p>Nova Drift runs entirely in a local web view and needs JavaScript enabled.</p>
+  </div>
+</noscript>
+
+<!-- Shown until the game paints. If this is still on screen, boot failed
+     before render and the error panel will say why. -->
+<div id="boot">
+  <div class="mark">NOVA DRIFT</div>
+  <div class="bar"><i></i></div>
+  <div>INITIALISING</div>
+</div>
 
 <div id="app">
   <header id="hud"></header>
