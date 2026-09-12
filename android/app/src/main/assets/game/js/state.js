@@ -65,6 +65,7 @@ const State = (() => {
   }
 
   async function reset() {
+    await Storage.clearAll();
     data = freshSave();
     await flush();
     return data;

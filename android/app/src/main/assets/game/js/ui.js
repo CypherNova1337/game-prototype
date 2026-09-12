@@ -25,6 +25,13 @@ const UI = (() => {
   const esc = s => String(s).replace(/[&<>"]/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  /** Inline custom properties for a rarity or faction accent. */
+  function accent(def, extra) {
+    return `--r:${def.color};--edge:${def.edge || def.color};`
+         + `--tint:${def.tint || 'transparent'};--glow:${def.glow || def.color};`
+         + (extra || '');
+  }
+
   function stars(n) {
     return `<span class="stars">${icon('ic-star').repeat(n)}</span>`;
   }
@@ -88,7 +95,7 @@ const UI = (() => {
     const entry = State.getEntry(itemId);
     const rarity = RARITY[row.rarity];
     return `
-      <button class="slot" style="--r:${rarity.color}" ${opts.attrs || ''}>
+      <button class="slot" style="${accent(rarity)}" ${opts.attrs || ''}>
         ${icon(row.icon, 'glyph')}
         ${entry && entry.level > 1 ? `<span class="lv">LV${entry.level}</span>` : ''}
         ${entry && entry.copies > 1 ? `<span class="copies">×${entry.copies}</span>` : ''}
@@ -112,7 +119,7 @@ const UI = (() => {
       const chance = Math.round(Missions.successChance(s) * 100);
       const locked = save.fuel.amount < s.fuel;
       return `
-        <button class="sector" style="--r:${faction.color}" data-act="sector" data-id="${s.id}">
+        <button class="sector" style="${accent(faction)}" data-act="sector" data-id="${s.id}">
           <div class="sector-head">
             <b>${esc(s.name)}</b>
             <span class="tag">${esc(faction.name.split(' ')[0])}</span>
@@ -157,7 +164,7 @@ const UI = (() => {
     const pityPct = Math.min(100, (save.pity.sinceLegendary / BANNER.pity.hard) * 100);
 
     const rate = r => `
-      <div class="rate-row" style="--r:${RARITY[r].color}">
+      <div class="rate-row" style="${accent(RARITY[r])}">
         <span class="k">${RARITY[r].label}</span>
         <span class="num dim">${(RARITY[r].weight * 100).toFixed(1)}%</span>
       </div>`;
@@ -202,7 +209,7 @@ const UI = (() => {
       </div>
       ${canSingle ? '' : '<p class="empty-note small">Out of chronite — run a sector to refill.</p>'}
 
-      <section class="panel" style="--r:${RARITY[feature.rarity].color};margin-top:12px">
+      <section class="panel" style="${accent(RARITY[feature.rarity], 'margin-top:12px')}">
         <div class="title">RATE-UP DOSSIER</div>
         <div class="detail-head">
           <div class="detail-icon">${icon(feature.icon)}</div>
@@ -270,15 +277,40 @@ const UI = (() => {
       </section>
 
       <section class="panel">
+        <div class="title">DIAGNOSTICS</div>
+        ${line('SAVE BACKEND', Storage.backend())}
+        ${line('ENGINE', engineName())}
+        ${line('VIEWPORT', window.innerWidth + ' × ' + window.innerHeight)}
+        ${line('LAYOUT SUPPORT', supports('aspect-ratio', '1') ? 'full' : 'fallback')}
+        <p class="small dim" style="line-height:1.7;margin:10px 0 0">
+          Read this out if the game misbehaves on your device — it says which
+          browser engine and storage the build is actually running on.
+        </p>
+      </section>
+
+      <section class="panel">
         <div class="title">BUILD</div>
-        <div class="statline"><span class="dim">VERSION</span><b>0.1.0 prototype</b></div>
-        <div class="statline"><span class="dim">SAVE</span><b>local device</b></div>
+        <div class="statline"><span class="dim">VERSION</span><b>0.1.1 prototype</b></div>
+        <div class="statline"><span class="dim">SAVE</span><b>${Storage.secured ? 'signed on device' : 'browser (dev)'}</b></div>
         <p class="small dim" style="line-height:1.7;margin:12px 0 14px">
           Vertical-slice prototype: summon, catalogue, deploy. Progress is stored on
           this device only — there is no account and nothing leaves the phone.
         </p>
         <button class="btn danger" data-act="reset">WIPE SAVE DATA</button>
       </section>`;
+  }
+
+  /** Chrome/WebView build string, trimmed to the part that matters. */
+  function engineName() {
+    const ua = navigator.userAgent || '';
+    const chrome = ua.match(/Chrome\/(\d+)/);
+    const android = ua.match(/Android (\d+)/);
+    return (chrome ? 'WebView ' + chrome[1] : 'unknown engine')
+         + (android ? ' · Android ' + android[1] : '');
+  }
+
+  function supports(prop, value) {
+    return !!(window.CSS && CSS.supports && CSS.supports(prop, value));
   }
 
   /* ---------------- router ---------------- */
@@ -331,7 +363,7 @@ const UI = (() => {
     const can = State.canUpgrade(itemId);
 
     openSheet(`
-      <div style="--r:${rarity.color}">
+      <div style="${accent(rarity)}">
         <div class="detail-head">
           <div class="detail-icon">${icon(row.icon)}</div>
           <div style="min-width:0">
@@ -391,7 +423,7 @@ const UI = (() => {
     const noFuel = save.fuel.amount < sector.fuel;
 
     openSheet(`
-      <div style="--r:${faction.color}">
+      <div style="${accent(faction)}">
         <h2>${esc(sector.name)}</h2>
         <div class="sub">${esc(faction.name)} CONTROLLED</div>
         <div class="statline"><span class="dim">THREAT RATING</span><b>${fmt(sector.power)}</b></div>
@@ -413,7 +445,7 @@ const UI = (() => {
     const faction = FACTION[report.sector.threat];
     const dropRow = report.drop ? getItemRow(report.drop.itemId) : null;
     openSheet(`
-      <div style="--r:${faction.color}">
+      <div style="${accent(faction)}">
         <div class="verdict ${report.won ? 'win' : 'loss'}">${report.won ? 'SECTOR CLEAR' : 'FALLBACK'}</div>
         <p class="small dim" style="text-align:center;margin:0 0 14px">
           ${esc(report.sector.name)} · ${Math.round(report.chance * 100)}% odds · power ${fmt(report.power)}
@@ -421,7 +453,7 @@ const UI = (() => {
         <div class="reward" style="--r:#9fb4cc">${icon('ic-scrap')} SCRAP <b>+${fmt(report.scrap)}</b></div>
         <div class="reward" style="--r:var(--cyan)">${icon('ic-chronite')} CHRONITE <b>+${fmt(report.chronite)}</b></div>
         ${dropRow ? `
-          <div class="reward" style="--r:${RARITY[dropRow.rarity].color}">
+          <div class="reward" style="${accent(RARITY[dropRow.rarity])}">
             ${icon(dropRow.icon)} ${esc(dropRow.name)}
             <b>${report.drop.isNew ? 'NEW' : '+' + report.drop.shards + ' shards'}</b>
           </div>` : ''}
@@ -448,7 +480,7 @@ const UI = (() => {
     const many = reveal.results.length > 1;
 
     overlayEl.innerHTML = `
-      <div class="reveal" data-act="advance" style="--r:${rarity.color}">
+      <div class="reveal" data-act="advance" style="${accent(rarity)}">
         <div class="warp"></div>
         ${many ? `<div class="counter">${reveal.index + 1} / ${reveal.results.length}</div>` : ''}
         <div class="card">

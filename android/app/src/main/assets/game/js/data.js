@@ -6,20 +6,31 @@
  * and everything the UI needs to draw a slot hangs off that row.
  * ------------------------------------------------------------------ */
 
+/* edge/tint are pre-mixed rgba rather than color-mix(), which only exists
+   in WebViews from 2023 onward and silently voids the whole declaration
+   on anything older. */
 const RARITY = {
-  common:    { id: 'common',    label: 'STANDARD',  stars: 1, color: '#8294ab', glow: 'rgba(130,148,171,.45)', weight: 0.600, shards: 1,  scrap: 40  },
-  rare:      { id: 'rare',      label: 'ENHANCED',  stars: 2, color: '#2af5ff', glow: 'rgba(42,245,255,.45)',  weight: 0.300, shards: 5,  scrap: 120 },
-  epic:      { id: 'epic',      label: 'PROTOTYPE', stars: 3, color: '#b46bff', glow: 'rgba(180,107,255,.5)',  weight: 0.085, shards: 20, scrap: 400 },
-  legendary: { id: 'legendary', label: 'ASCENDANT', stars: 4, color: '#ffc247', glow: 'rgba(255,194,71,.55)',  weight: 0.015, shards: 60, scrap: 1200 }
+  common:    { id: 'common',    label: 'STANDARD',  stars: 1, color: '#8294ab',
+               glow: 'rgba(130,148,171,.45)', edge: 'rgba(130,148,171,.5)',  tint: 'rgba(130,148,171,.16)',
+               weight: 0.600, shards: 1,  scrap: 40  },
+  rare:      { id: 'rare',      label: 'ENHANCED',  stars: 2, color: '#2af5ff',
+               glow: 'rgba(42,245,255,.45)',  edge: 'rgba(42,245,255,.5)',   tint: 'rgba(42,245,255,.16)',
+               weight: 0.300, shards: 5,  scrap: 120 },
+  epic:      { id: 'epic',      label: 'PROTOTYPE', stars: 3, color: '#b46bff',
+               glow: 'rgba(180,107,255,.5)',  edge: 'rgba(180,107,255,.55)', tint: 'rgba(180,107,255,.18)',
+               weight: 0.085, shards: 20, scrap: 400 },
+  legendary: { id: 'legendary', label: 'ASCENDANT', stars: 4, color: '#ffc247',
+               glow: 'rgba(255,194,71,.55)',  edge: 'rgba(255,194,71,.6)',   tint: 'rgba(255,194,71,.2)',
+               weight: 0.015, shards: 60, scrap: 1200 }
 };
 
 const RARITY_ORDER = ['legendary', 'epic', 'rare', 'common'];
 
 const FACTION = {
-  helix:   { id: 'helix',   name: 'HELIX SYNDICATE', color: '#2af5ff' },
-  raven:   { id: 'raven',   name: 'RAVEN COLLECTIVE', color: '#ff4fd1' },
-  solaris: { id: 'solaris', name: 'SOLARIS COMPACT',  color: '#ffc247' },
-  voidk:   { id: 'voidk',   name: 'VOIDKIN',          color: '#9d7bff' }
+  helix:   { id: 'helix',   name: 'HELIX SYNDICATE',  color: '#2af5ff', edge: 'rgba(42,245,255,.5)',  tint: 'rgba(42,245,255,.12)' },
+  raven:   { id: 'raven',   name: 'RAVEN COLLECTIVE', color: '#ff4fd1', edge: 'rgba(255,79,209,.5)',  tint: 'rgba(255,79,209,.12)' },
+  solaris: { id: 'solaris', name: 'SOLARIS COMPACT',  color: '#ffc247', edge: 'rgba(255,194,71,.5)',  tint: 'rgba(255,194,71,.12)' },
+  voidk:   { id: 'voidk',   name: 'VOIDKIN',          color: '#9d7bff', edge: 'rgba(157,123,255,.5)', tint: 'rgba(157,123,255,.12)' }
 };
 
 /* icon = id of an <symbol> in the sprite baked into index.html */
